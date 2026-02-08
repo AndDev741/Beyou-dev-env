@@ -9,9 +9,9 @@ This repo orchestrates the Beyou backend, frontend, and Postgres for local devel
 Clone all the required repositories in a single folder
 
 ```bash
-git clone https://github.com/andre/beyou-backend
-git clone https://github.com/andre/beyou-frontend
-git clone https://github.com/andre/beyou-dev-env
+git clone https://github.com/AndDev741/Beyou-backend-spring.git
+git clone https://github.com/AndDev741/Beyou-Frontend.git
+git clone https://github.com/AndDev741/Beyou-dev-env.git
 ```
 
 Will be like this:
