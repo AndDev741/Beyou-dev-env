@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ../Beyou-backend-spring
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000/}
+      OAUTH_GOOGLE_URL: ${OAUTH_GOOGLE_URL:-https://oauth2.googleapis.com/token}
+      USER_INFO_GOOGLE_URL: ${USER_INFO_GOOGLE_URL:-https://www.googleapis.com/oauth2/v2/userinfo}
+    ports:
+      - "8099:8099"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - beyou_net
+
+  frontend:
+    build:
+      context: ../Beyou-Frontend
+      dockerfile: Dockerfile
+      target: nginx
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - beyou_net
