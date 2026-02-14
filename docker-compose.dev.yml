@@ -1,6 +1,25 @@
 version: "3.8"
 
 services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-beyou}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+    ports:
+      - "${POSTGRES_PORT:-5490}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-beyou}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - beyou_net
+
   backend:
     build:
       context: ../Beyou-backend-spring
@@ -9,16 +28,12 @@ services:
     volumes:
       - ../Beyou-backend-spring:/app
       - beyou_maven_repo:/root/.m2
+    env_file:
+      - .env
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
-      TOKEN_SECRET: ${TOKEN_SECRET}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000/}
-      OAUTH_GOOGLE_URL: ${OAUTH_GOOGLE_URL:-https://oauth2.googleapis.com/token}
-      USER_INFO_GOOGLE_URL: ${USER_INFO_GOOGLE_URL:-https://www.googleapis.com/oauth2/v2/userinfo}
     ports:
       - "8099:8099"
     depends_on:
@@ -45,3 +60,8 @@ services:
 volumes:
   beyou_maven_repo: {}
   beyou_frontend_node_modules: {}
+  postgres_data: {}
+
+networks:
+  beyou_net:
+    name: beyou_net
