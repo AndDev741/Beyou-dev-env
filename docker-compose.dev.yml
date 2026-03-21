@@ -13,7 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-beyou}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-beyou}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -34,13 +34,22 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+      # Override any JAVA_OPTS coming from `.env` so heap sizing is controlled consistently here.
+      JAVA_OPTS: ""
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70
     ports:
       - "8099:8099"
     depends_on:
       db:
         condition: service_healthy
     networks:
-      - beyou_net
+      - beyou_net     
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
 
   frontend:
     build:
@@ -51,7 +60,7 @@ services:
       - ../Beyou-Frontend:/app
       - beyou_frontend_node_modules:/app/node_modules
     ports:
-      - "3000:3000"
+      - "5151:3000"
     depends_on:
       - backend
     networks:
