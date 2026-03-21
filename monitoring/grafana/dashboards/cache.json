@@ -1,0 +1,76 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Cache Hit Rate (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"hit\"}[1m])) by (cache) / (sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"hit\"}[1m])) by (cache) + sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"miss\"}[1m])) by (cache))", "legendFormat": "{{cache}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Cache Hits vs Misses (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"hit\"}[1m])) by (cache)", "legendFormat": "{{cache}} hits", "refId": "A" },
+        { "expr": "sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"miss\"}[1m])) by (cache)", "legendFormat": "{{cache}} misses", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Total Cache Hit Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "steps": [ { "value": 0, "color": "red" }, { "value": 0.5, "color": "yellow" }, { "value": 0.8, "color": "green" } ] } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(cache_gets_total{application=\"beyou-backend\", result=\"hit\"}[5m])) / sum(rate(cache_gets_total{application=\"beyou-backend\"}[5m]))", "legendFormat": "hit rate", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Cache Size (entries)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "cache_size{application=\"beyou-backend\"}", "legendFormat": "{{cache}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Cache Evictions (per second)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(cache_evictions_total{application=\"beyou-backend\"}[1m])", "legendFormat": "{{cache}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Cache Puts (per second)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(cache_puts_total{application=\"beyou-backend\"}[1m])", "legendFormat": "{{cache}}", "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["cache", "beyou"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "Beyou — Cache",
+  "uid": "beyou-cache"
+}
