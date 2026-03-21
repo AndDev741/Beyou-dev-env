@@ -1,0 +1,134 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Overall Throughput (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m]))", "legendFormat": "total req/s", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Error Rate",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.01 }] } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", status=~\"5..\"}[1m])) / sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m]))", "legendFormat": "5xx", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Domain: /category",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=\"/category\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/category\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/category\"}[1m])", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Domain: /habit",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=\"/habit\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/habit\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/habit\"}[1m])", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Domain: /task",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=\"/task\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/task\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/task\"}[1m])", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Domain: /goal",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=\"/goal\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/goal\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/goal\"}[1m])", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Domain: /routine",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=~\"/routine.*\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/routine.*\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/routine.*\"}[1m]))", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Domain: /schedule",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=\"/schedule\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/schedule\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=\"/schedule\"}[1m])", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Docs: Architecture",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=~\"/docs/architecture.*\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/architecture.*\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/architecture.*\"}[1m]))", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Docs: API",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=~\"/docs/api.*\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/api.*\"}[1m])", "legendFormat": "avg latency", "refId": "A" },
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/api.*\"}[1m]))", "legendFormat": "req/s", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Docs: Projects + Blog + Search",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/(projects|blog|search).*\"}[1m]))", "legendFormat": "req/s", "refId": "A" },
+        { "expr": "rate(http_server_requests_seconds_sum{application=\"beyou-backend\", uri=~\"/docs/(projects|blog|search).*\"}[1m]) / rate(http_server_requests_seconds_count{application=\"beyou-backend\", uri=~\"/docs/(projects|blog|search).*\"}[1m])", "legendFormat": "avg latency", "refId": "B" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["cache", "benchmark", "beyou"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "Beyou — Cache Benchmark",
+  "uid": "beyou-cache-benchmark"
+}

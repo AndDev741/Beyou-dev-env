@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  backend:
+    ports:
+      - "${MANAGEMENT_PORT:-9091}:${MANAGEMENT_PORT:-9091}"
+
+  prometheus:
+    image: prom/prometheus:v3.3.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - backend
+    networks:
+      - beyou_net
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "true"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - beyou_net
+
+volumes:
+  grafana_data: {}
+
+networks:
+  beyou_net:
+    name: beyou_net

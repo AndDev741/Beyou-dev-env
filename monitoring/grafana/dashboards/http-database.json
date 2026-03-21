@@ -1,0 +1,81 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "HTTP Request Rate (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m])) by (uri)", "legendFormat": "{{uri}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "HTTP Request Duration p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{application=\"beyou-backend\"}[1m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"beyou-backend\"}[1m])) by (le))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application=\"beyou-backend\"}[1m])) by (le))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "title": "HTTP Error Rate (4xx + 5xx / total)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", status=~\"4..\"}[1m])) / sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m]))", "legendFormat": "4xx rate", "refId": "A" },
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\", status=~\"5..\"}[1m])) / sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m]))", "legendFormat": "5xx rate", "refId": "B" }
+      ]
+    },
+    {
+      "title": "HikariCP Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_active{application=\"beyou-backend\"}", "legendFormat": "active", "refId": "A" },
+        { "expr": "hikaricp_connections_idle{application=\"beyou-backend\"}", "legendFormat": "idle", "refId": "B" },
+        { "expr": "hikaricp_connections_pending{application=\"beyou-backend\"}", "legendFormat": "pending", "refId": "C" },
+        { "expr": "hikaricp_connections{application=\"beyou-backend\"}", "legendFormat": "total", "refId": "D" }
+      ]
+    },
+    {
+      "title": "HikariCP Connection Acquire Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(hikaricp_connections_acquire_seconds_sum{application=\"beyou-backend\"}[1m]) / rate(hikaricp_connections_acquire_seconds_count{application=\"beyou-backend\"}[1m])", "legendFormat": "avg acquire time", "refId": "A" }
+      ]
+    },
+    {
+      "title": "HTTP Request Count by Method",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"beyou-backend\"}[1m])) by (method)", "legendFormat": "{{method}}", "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["http", "database", "beyou"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "Beyou — HTTP & Database",
+  "uid": "beyou-http-database"
+}

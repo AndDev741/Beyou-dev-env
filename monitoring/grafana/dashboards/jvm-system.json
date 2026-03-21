@@ -1,0 +1,99 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Heap Memory Used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 20 } },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{application=\"beyou-backend\", area=\"heap\"}", "legendFormat": "{{id}} used", "refId": "A" },
+        { "expr": "jvm_memory_committed_bytes{application=\"beyou-backend\", area=\"heap\"}", "legendFormat": "{{id}} committed", "refId": "B" },
+        { "expr": "jvm_memory_max_bytes{application=\"beyou-backend\", area=\"heap\"}", "legendFormat": "{{id}} max", "refId": "C" }
+      ]
+    },
+    {
+      "title": "Non-Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 20 } },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{application=\"beyou-backend\", area=\"nonheap\"}", "legendFormat": "{{id}} used", "refId": "A" },
+        { "expr": "jvm_memory_committed_bytes{application=\"beyou-backend\", area=\"nonheap\"}", "legendFormat": "{{id}} committed", "refId": "B" }
+      ]
+    },
+    {
+      "title": "GC Pause Count (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cpm" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(jvm_gc_pause_seconds_count{application=\"beyou-backend\"}[1m]) * 60", "legendFormat": "{{cause}} {{action}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "GC Pause Duration (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(jvm_gc_pause_seconds_sum{application=\"beyou-backend\"}[1m])", "legendFormat": "{{cause}} {{action}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Live Threads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        { "expr": "jvm_threads_live_threads{application=\"beyou-backend\"}", "legendFormat": "live", "refId": "A" },
+        { "expr": "jvm_threads_daemon_threads{application=\"beyou-backend\"}", "legendFormat": "daemon", "refId": "B" },
+        { "expr": "jvm_threads_peak_threads{application=\"beyou-backend\"}", "legendFormat": "peak", "refId": "C" }
+      ]
+    },
+    {
+      "title": "System CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "system_cpu_usage{application=\"beyou-backend\"}", "legendFormat": "system", "refId": "A" },
+        { "expr": "process_cpu_usage{application=\"beyou-backend\"}", "legendFormat": "process", "refId": "B" }
+      ]
+    },
+    {
+      "title": "System Load Average",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "system_load_average_1m{application=\"beyou-backend\"}", "legendFormat": "1m load", "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["jvm", "beyou"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "Beyou — JVM & System",
+  "uid": "beyou-jvm-system"
+}
