@@ -31,9 +31,6 @@ services:
     env_file:
       - .env
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
       # Override any JAVA_OPTS coming from `.env` so heap sizing is controlled consistently here.
       JAVA_OPTS: ""
       JAVA_TOOL_OPTIONS: >-
