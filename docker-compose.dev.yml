@@ -25,6 +25,9 @@ services:
       target: dev
     volumes:
       - ../Beyou-backend-spring:/app
+      # Keep container build output off the host's target/ — prevents two Mavens
+      # (host + container) corrupting the same classes dir and root-owned leftovers.
+      - beyou_backend_target:/app/target
       - beyou_maven_repo:/root/.m2
     env_file:
       - .env
@@ -63,6 +66,7 @@ services:
 
 volumes:
   beyou_maven_repo: {}
+  beyou_backend_target: {}
   beyou_frontend_node_modules: {}
   postgres_data: {}
 
