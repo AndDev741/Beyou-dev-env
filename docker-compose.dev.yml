@@ -52,7 +52,7 @@ services:
   frontend:
     build:
       context: ../Beyou-Frontend
-      dockerfile: Dockerfile
+      dockerfile: apps/web/Dockerfile
       target: dev
     volumes:
       - ../Beyou-Frontend:/app

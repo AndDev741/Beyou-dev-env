@@ -21,7 +21,7 @@ services:
   frontend:
     build:
       context: ../Beyou-Frontend
-      dockerfile: Dockerfile
+      dockerfile: apps/web/Dockerfile
       target: nginx
     ports:
       - "3000:80"
