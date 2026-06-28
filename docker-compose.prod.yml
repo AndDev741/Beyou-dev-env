@@ -4,6 +4,7 @@ services:
       context: ../Beyou-backend-spring
       dockerfile: Dockerfile
       target: runtime
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -23,6 +24,7 @@ services:
       context: ../Beyou-Frontend
       dockerfile: apps/web/Dockerfile
       target: nginx
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
