@@ -1,3 +1,5 @@
+# Isolated project name so this never collides with the dev stack in this directory.
+name: beyou-e2e
 # Self-contained stack for Playwright e2e (CI + local). Build the two images as
 # beyou-backend:e2e / beyou-web:e2e first, then `docker compose -f docker-compose.e2e.yml up -d --wait`.
 services:
