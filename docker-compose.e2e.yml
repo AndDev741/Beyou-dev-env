@@ -1,0 +1,40 @@
+# Self-contained stack for Playwright e2e (CI + local). Build the two images as
+# beyou-backend:e2e / beyou-web:e2e first, then `docker compose -f docker-compose.e2e.yml up -d --wait`.
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: beyou_e2e
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d beyou_e2e"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [beyou_e2e_net]
+
+  backend:
+    image: beyou-backend:e2e
+    environment:
+      SPRING_PROFILES_ACTIVE: e2e
+      DATABASE_E2E_URL: jdbc:postgresql://db:5432/beyou_e2e
+      DATABASE_USERNAME: postgres
+      DATABASE_PASSWORD: postgres
+    ports:
+      - "8099:8099"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [beyou_e2e_net]
+
+  web:
+    image: beyou-web:e2e
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks: [beyou_e2e_net]
+
+networks:
+  beyou_e2e_net:
