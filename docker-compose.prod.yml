@@ -9,7 +9,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
     ports:
-      - "8099:8099"
+      - "127.0.0.1:8099:8099"
     depends_on:
       db:
         condition: service_healthy
@@ -22,7 +22,7 @@ services:
     image: ghcr.io/anddev741/beyou-web:latest
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - backend
     labels:
