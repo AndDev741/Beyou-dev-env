@@ -1,9 +1,6 @@
 services:
   backend:
-    build:
-      context: ../Beyou-backend-spring
-      dockerfile: Dockerfile
-      target: runtime
+    image: ghcr.io/anddev741/beyou-backend:latest
     restart: unless-stopped
     env_file:
       - .env
@@ -16,18 +13,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     networks:
       - beyou_net
 
   frontend:
-    build:
-      context: ../Beyou-Frontend
-      dockerfile: apps/web/Dockerfile
-      target: nginx
+    image: ghcr.io/anddev741/beyou-web:latest
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       - backend
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - beyou_net
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --label-enable --cleanup --interval 300
     networks:
       - beyou_net
