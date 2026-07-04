@@ -6,8 +6,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-beyou}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1516}
-    ports:
-      - "${POSTGRES_PORT:-5490}:5432"
+    # Host port is published by docker-compose.yml (127.0.0.1:5490:5432).
+    # Re-declaring it here produced a duplicate, overlapping 5490 binding that
+    # wedged the container (no published port, detached from beyou_net). Do not re-add.
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
