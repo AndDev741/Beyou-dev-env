@@ -8,6 +8,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - beyou_uploads:/data/uploads
     ports:
       - "127.0.0.1:8099:8099"
     depends_on:
