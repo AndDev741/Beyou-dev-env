@@ -30,6 +30,7 @@ services:
       # (host + container) corrupting the same classes dir and root-owned leftovers.
       - beyou_backend_target:/app/target
       - beyou_maven_repo:/root/.m2
+      - beyou_uploads:/data/uploads
     env_file:
       - .env
     environment:
@@ -37,6 +38,7 @@ services:
       JAVA_OPTS: ""
       JAVA_TOOL_OPTIONS: >-
         -XX:MaxRAMPercentage=70
+      UPLOAD_DIR: /data/uploads
     ports:
       - "8099:8099"
     depends_on:
@@ -70,6 +72,7 @@ volumes:
   beyou_backend_target: {}
   beyou_frontend_node_modules: {}
   postgres_data: {}
+  beyou_uploads: {}
 
 networks:
   beyou_net:

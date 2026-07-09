@@ -24,3 +24,4 @@ networks:
 
 volumes:
   postgres_data: {}
+  beyou_uploads: {}
