@@ -34,9 +34,91 @@ services:
     networks:
       - beyou_net
 
+  # --- GlitchTip: self-hosted error telemetry collector -----------------------
+  # Speaks the Sentry API, so the official Sentry SDKs (backend, web, mobile)
+  # point at it by DSN. Lives here rather than in the base stack because it is
+  # observability infrastructure alongside Prometheus/Grafana, and because it
+  # must sit on `beyou_net` to reach the backend management port (9091) for the
+  # uptime + heartbeat monitors.
+  #
+  # Its Postgres and Valkey are deliberately NOT on `beyou_net` — only the web
+  # service is dual-homed, so the app network cannot see GlitchTip's datastores.
+  glitchtip-db:
+    image: postgres:18.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${GLITCHTIP_DB_NAME:-glitchtip}
+      POSTGRES_USER: ${GLITCHTIP_DB_USER:-glitchtip}
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:-glitchtip}
+    volumes:
+      # Postgres 18 images relocated PGDATA; the declared volume is the whole
+      # /var/lib/postgresql tree, not /var/lib/postgresql/data.
+      - glitchtip_pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GLITCHTIP_DB_USER:-glitchtip} -d ${GLITCHTIP_DB_NAME:-glitchtip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - glitchtip_net
+
+  glitchtip-valkey:
+    image: valkey/valkey:9.1-alpine
+    restart: unless-stopped
+    networks:
+      - glitchtip_net
+
+  glitchtip:
+    image: glitchtip/glitchtip:6.2.2
+    restart: unless-stopped
+    environment:
+      # GlitchTip 6 ships web + background worker + startup migrations in one
+      # process under this role. There is no separate worker/migrate service to
+      # run any more; migrations execute automatically on container start.
+      SERVER_ROLE: all_in_one
+      DATABASE_URL: postgres://${GLITCHTIP_DB_USER:-glitchtip}:${GLITCHTIP_DB_PASSWORD:-glitchtip}@glitchtip-db:5432/${GLITCHTIP_DB_NAME:-glitchtip}
+      VALKEY_URL: redis://glitchtip-valkey:6379
+      # Required. No default on purpose — an empty value fails the container
+      # loudly rather than shipping a known secret. openssl rand -hex 32
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://localhost:8000}
+      # consolemail:// prints mail to the container log — fine for local dev,
+      # but new-issue alerts (R17) need a real SMTP URL in a deployed stack.
+      EMAIL_URL: ${GLITCHTIP_EMAIL_URL:-consolemail://}
+      DEFAULT_FROM_EMAIL: ${GLITCHTIP_FROM_EMAIL:-glitchtip@localhost}
+      # Registration lock: the FIRST account can always self-register; every
+      # later signup is blocked while this is False. Leave it False.
+      ENABLE_USER_REGISTRATION: ${GLITCHTIP_ENABLE_USER_REGISTRATION:-False}
+      ENABLE_ORGANIZATION_CREATION: "False"
+      # Bounded event store. Without this the default is 90 days and the
+      # Postgres volume grows unchecked.
+      GLITCHTIP_RETENTION_DAYS: ${GLITCHTIP_RETENTION_DAYS:-30}
+      # Uptime monitors default to refusing private/RFC1918 targets (SSRF
+      # guard). The backend is only reachable at http://backend:9091 inside
+      # beyou_net, so the guard has to be relaxed for the U17 monitors.
+      GLITCHTIP_UPTIME_ALLOW_PRIVATE_IPS: "True"
+      GLITCHTIP_ENABLE_UPTIME: "True"
+    volumes:
+      # Sourcemap / debug-symbol uploads.
+      - glitchtip_uploads:/code/uploads
+    ports:
+      - "${GLITCHTIP_PORT:-8000}:8000"
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+      glitchtip-valkey:
+        condition: service_started
+    networks:
+      - beyou_net
+      - glitchtip_net
+
 volumes:
   grafana_data: {}
+  glitchtip_pg_data: {}
+  glitchtip_uploads: {}
 
 networks:
   beyou_net:
     name: beyou_net
+  glitchtip_net:
+    name: glitchtip_net
