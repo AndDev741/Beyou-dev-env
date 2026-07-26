@@ -100,12 +100,23 @@ heartbeat, created = Monitor.objects.get_or_create(
 )
 print(f"monitor 'Snapshot scheduler heartbeat': {'created' if created else 'already present'}")
 
+def dsn_key(public_key):
+    """GlitchTip issues hyphenated UUID keys. The JavaScript SDK's DSN parser
+    matches the public key with `\\w+`, which excludes `-`, so a hyphenated key
+    makes makeDsn() fail — no transport is constructed and every event is
+    dropped in silence, with no error anywhere. GlitchTip's ingest accepts the
+    key with the hyphens removed, so strip them. The Java SDK parses either
+    form; stripping everywhere keeps one rule instead of a per-surface one
+    somebody will get wrong later."""
+    return str(public_key).replace("-", "")
+
+
 print("")
 print("=== configure these ===")
 print("")
 print("# Beyou-dev-env/.env — the backend runs inside the compose network, so it")
 print("# addresses the collector by service name, not localhost.")
-print(f"SENTRY_DSN=http://{dsns['beyou-backend'][0]}@glitchtip:8000/{dsns['beyou-backend'][1]}")
+print(f"SENTRY_DSN=http://{dsn_key(dsns['beyou-backend'][0])}@glitchtip:8000/{dsns['beyou-backend'][1]}")
 print(
     f"SNAPSHOT_HEARTBEAT_URL=http://glitchtip:8000/api/0/organizations/{org.slug}"
     f"/heartbeat_check/{heartbeat.endpoint_id}/"
@@ -113,8 +124,8 @@ print(
 print("")
 print("# Beyou-Frontend/apps/web/.env — inlined into the bundle at BUILD time.")
 print("# Changing it needs a rebuild, not a restart.")
-print(f"VITE_SENTRY_DSN=http://{dsns['beyou-web'][0]}@localhost:8000/{dsns['beyou-web'][1]}")
+print(f"VITE_SENTRY_DSN=http://{dsn_key(dsns['beyou-web'][0])}@localhost:8000/{dsns['beyou-web'][1]}")
 print("")
 print("# Beyou-Frontend/apps/mobile/.env — also build-time. The device is not on")
 print("# localhost, so this needs the host's address on your network.")
-print(f"EXPO_PUBLIC_SENTRY_DSN=http://{dsns['beyou-mobile'][0]}@<HOST-LAN-IP>:8000/{dsns['beyou-mobile'][1]}")
+print(f"EXPO_PUBLIC_SENTRY_DSN=http://{dsn_key(dsns['beyou-mobile'][0])}@<HOST-LAN-IP>:8000/{dsns['beyou-mobile'][1]}")
