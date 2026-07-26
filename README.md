@@ -90,12 +90,29 @@ Notes:
   are isolated on `glitchtip_net`.
 - Put GlitchTip behind nginx with SSL for any non-local deployment.
 
+### Bootstrap script (do this instead of the manual steps below)
+
+```bash
+./scripts/bootstrap-glitchtip.sh
+```
+
+Creates the organization, one project per reporting surface, and both monitors,
+then prints the DSNs and the heartbeat check-in URL ready to paste into the three
+`.env` files. Safe to run repeatedly — every step is get_or_create, so a second
+run reports "already present" and changes nothing.
+
+It does **not** create the first account: registration sets a password, which a
+script has no business holding. Register in the UI first, then run this.
+
+The sections below document what the script creates and why, so the setup stays
+recoverable if the script ever stops matching a newer GlitchTip.
+
 ### Monitors
 
 Two monitors, answering two different questions. Neither is created by Compose —
 GlitchTip monitors live in its database, created through the UI or its API — so
 recreating them after a `GLITCHTIP_RETENTION_DAYS` wipe, a volume reset, or a move
-to a new host means redoing these steps. That is what this section is for.
+to a new host means redoing these steps.
 
 Both live under **Uptime Monitors → New Monitor** in the GlitchTip UI. Set the
 project to `beyou-backend` so the alerts land with the backend's error events, and
