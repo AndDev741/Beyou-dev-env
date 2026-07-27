@@ -100,6 +100,26 @@ heartbeat, created = Monitor.objects.get_or_create(
 )
 print(f"monitor 'Snapshot scheduler heartbeat': {'created' if created else 'already present'}")
 
+# TCP Port monitors carry the port in the URL ("frontend:3000"), not in
+    # expected_status.  GlitchTip's uptime runner calls url.split(":") and
+    # feeds the two parts to asyncio.open_connection — expected_status is
+    # only read by the HTTP monitor path (GET / POST / PING).
+FRONTEND_PORT = "frontend:3000"
+frontend_project = Project.objects.get(slug="beyou-web", organization=org)
+web, created = Monitor.objects.get_or_create(
+    name="Beyou web frontend",
+    organization=org,
+    defaults={
+        "project": frontend_project,
+        "monitor_type": "TCP Port",
+        "url": FRONTEND_PORT,
+        "interval": 60,
+        "timeout": 10,
+        "confirmation_threshold": 2,
+    },
+)
+print(f"monitor 'Beyou web frontend': {'created' if created else 'already present'}")
+
 def dsn_key(public_key):
     """GlitchTip issues hyphenated UUID keys. The JavaScript SDK's DSN parser
     matches the public key with `\\w+`, which excludes `-`, so a hyphenated key
