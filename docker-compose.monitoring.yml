@@ -80,7 +80,7 @@ services:
       VALKEY_URL: redis://glitchtip-valkey:6379
       # Required. No default on purpose — an empty value fails the container
       # loudly rather than shipping a known secret. openssl rand -hex 32
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:?Must set GLITCHTIP_SECRET_KEY — openssl rand -hex 32}
       GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://localhost:8000}
       # consolemail:// prints mail to the container log — fine for local dev,
       # but new-issue alerts (R17) need a real SMTP URL in a deployed stack.
@@ -102,7 +102,13 @@ services:
       # Sourcemap / debug-symbol uploads.
       - glitchtip_uploads:/code/uploads
     ports:
-      - "${GLITCHTIP_PORT:-8000}:8000"
+      # Loopback-bound. GlitchTip lets the FIRST account self-register as admin
+      # regardless of ENABLE_USER_REGISTRATION, so between `up` and the moment
+      # you register, whoever reaches this port owns the collector — every error
+      # event and every uploaded source map, which is the web app's source.
+      # Reach it from another host through a tunnel or reverse proxy, never by
+      # publishing it. Override only if you know why.
+      - "${GLITCHTIP_BIND:-127.0.0.1}:${GLITCHTIP_PORT:-8000}:8000"
     depends_on:
       glitchtip-db:
         condition: service_healthy

@@ -170,7 +170,7 @@ cycle or a single failed delivery does not page anyone.
 Saving the monitor produces an endpoint URL of the form:
 
 ```
-http://glitchtip:8000/api/<org-slug>/heartbeat/<uuid>/
+http://glitchtip:8000/api/0/organizations/<org-slug>/heartbeat_check/<endpoint-id>/
 ```
 
 Put it in `.env` as `SNAPSHOT_HEARTBEAT_URL` and restart the backend. Use the

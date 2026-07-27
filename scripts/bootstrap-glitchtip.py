@@ -10,6 +10,8 @@
 # creates a user: register the first account in the UI, which sets a password
 # this script has no business knowing.
 
+import os
+
 from django.apps import apps
 
 Organization = apps.get_model("organizations_ext", "Organization")
@@ -39,6 +41,27 @@ UPTIME_URL = "http://backend:9091/actuator/health"
 # The snapshot job runs hourly on the hour. 90 minutes leaves room for one slow
 # cycle or a single failed check-in without paging anyone.
 HEARTBEAT_PERIOD_SECONDS = 5400
+
+# GlitchTip probes from inside beyou_net, so this must be the CONTAINER port, not
+# the published one. Dev runs Vite directly (3000); prod serves the built app
+# through nginx (80). Getting this wrong leaves the monitor permanently DOWN in
+# whichever environment was not the default, which is worse than no monitor —
+# a red light nobody believes.
+FRONTEND_TARGET = os.environ.get("GLITCHTIP_FRONTEND_TARGET", "frontend:80")
+
+def reconcile(monitor, **fields):
+    """Django applies `defaults` only on creation, so a re-run of get_or_create
+    reports "already present" and silently keeps whatever drifted — including a
+    wrong probe target. Writing the script's own values back is what makes the
+    idempotence claim true rather than "creates once, then lies"."""
+    changed = [k for k, v in fields.items() if getattr(monitor, k) != v]
+    if not changed:
+        return
+    for k, v in fields.items():
+        setattr(monitor, k, v)
+    monitor.save(update_fields=list(fields))
+    print(f"  reconciled {monitor.name}: {', '.join(changed)}")
+
 
 owner = User.objects.order_by("id").first()
 if owner is None:
@@ -86,6 +109,8 @@ uptime, created = Monitor.objects.get_or_create(
         "confirmation_threshold": 2,
     },
 )
+reconcile(uptime, project=backend_project, monitor_type="GET", url=UPTIME_URL,
+          expected_status=200, interval=60, timeout=10, confirmation_threshold=2)
 print(f"monitor 'Beyou backend health': {'created' if created else 'already present'}")
 
 heartbeat, created = Monitor.objects.get_or_create(
@@ -98,13 +123,14 @@ heartbeat, created = Monitor.objects.get_or_create(
         "confirmation_threshold": 1,
     },
 )
+reconcile(heartbeat, project=backend_project, monitor_type="Heartbeat",
+          interval=HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1)
 print(f"monitor 'Snapshot scheduler heartbeat': {'created' if created else 'already present'}")
 
 # TCP Port monitors carry the port in the URL ("frontend:3000"), not in
     # expected_status.  GlitchTip's uptime runner calls url.split(":") and
     # feeds the two parts to asyncio.open_connection — expected_status is
     # only read by the HTTP monitor path (GET / POST / PING).
-FRONTEND_PORT = "frontend:3000"
 frontend_project = Project.objects.get(slug="beyou-web", organization=org)
 web, created = Monitor.objects.get_or_create(
     name="Beyou web frontend",
@@ -112,12 +138,14 @@ web, created = Monitor.objects.get_or_create(
     defaults={
         "project": frontend_project,
         "monitor_type": "TCP Port",
-        "url": FRONTEND_PORT,
+        "url": FRONTEND_TARGET,
         "interval": 60,
         "timeout": 10,
         "confirmation_threshold": 2,
     },
 )
+reconcile(web, project=frontend_project, monitor_type="TCP Port", url=FRONTEND_TARGET,
+          interval=60, timeout=10, confirmation_threshold=2)
 print(f"monitor 'Beyou web frontend': {'created' if created else 'already present'}")
 
 def dsn_key(public_key):
