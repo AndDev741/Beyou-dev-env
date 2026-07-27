@@ -76,8 +76,7 @@ services:
       # process under this role. There is no separate worker/migrate service to
       # run any more; migrations execute automatically on container start.
       SERVER_ROLE: all_in_one
-      # ggignore
-      DATABASE_URL: postgres://${GLITCHTIP_DB_USER:-glitchtip}:${GLITCHTIP_DB_PASSWORD:-glitchtip}@glitchtip-db:5432/${GLITCHTIP_DB_NAME:-glitchtip}
+      DATABASE_URL: postgres://${GLITCHTIP_DB_USER:-glitchtip}:${GLITCHTIP_DB_PASSWORD:?Must set GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/${GLITCHTIP_DB_NAME:-glitchtip}
       VALKEY_URL: redis://glitchtip-valkey:6379
       # Required. No default on purpose — an empty value fails the container
       # loudly rather than shipping a known secret. openssl rand -hex 32
