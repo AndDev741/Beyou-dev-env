@@ -61,24 +61,58 @@ Grafana, and GlitchTip (self-hosted error telemetry, Sentry-API compatible).
 
 ### GlitchTip first-run
 
+**There is one supported path: register the admin account in the UI, then run
+`./scripts/bootstrap-glitchtip.sh`.** Everything after this list is a *reference
+record* of what that script creates and why — kept so the setup stays recoverable
+if the script ever stops matching a newer GlitchTip. Do not work through it as a
+second procedure. Creating the organization, the projects or the alert rules by
+hand *as well* is how you end up with DSNs pointing at one project and alert
+rules attached to another, so events arrive somewhere nothing is watching.
+
 1. Set `GLITCHTIP_SECRET_KEY` in `.env` before starting — the container will not
    boot without it:
    ```
    openssl rand -hex 32
    ```
-   Fill in the rest of the `GLITCHTIP_*` block in `.env.example` too. For a
-   deployed stack, point `GLITCHTIP_DOMAIN` at the real URL and set a real
-   `GLITCHTIP_EMAIL_URL`, otherwise new-issue alerts only reach the container log.
+   Fill in the rest of the `GLITCHTIP_*` block from `.env.example` too. For a
+   deployed stack: point `GLITCHTIP_DOMAIN` at the real URL, set a real
+   `GLITCHTIP_EMAIL_URL` and a matching `GLITCHTIP_FROM_EMAIL`, and set
+   `GLITCHTIP_ALERT_EMAIL` to the mailbox that should receive alerts. Leave
+   `GLITCHTIP_EMAIL_URL=consolemail://` for local dev — see
+   [Alerts](#alerts-making-one-actually-arrive).
 2. Start the stack with `--monitoring`. The first boot runs database migrations
    automatically and takes a minute or two.
 3. Open the UI at http://localhost:8000 (or `GLITCHTIP_PORT`).
-4. Click **Register** and create the first account. This is the admin account.
-   With `GLITCHTIP_ENABLE_USER_REGISTRATION=False` (the default here), self-signup
+4. Click **Register** and create the first account. This is the admin account, and
+   it is the one step the script deliberately does not do: registration sets a
+   password, which a bootstrap script has no business holding. With
+   `GLITCHTIP_ENABLE_USER_REGISTRATION=False` (the default here), self-signup
    closes as soon as that first account exists — later users must be invited.
-5. Create an organization, then a project — one project per surface
-   (`beyou-backend`, `beyou-web`, `beyou-mobile`).
-6. The project's DSN is under **Settings → Projects → \<project\> → Client Keys (DSN)**.
-   Copy it into the corresponding app's env var. The DSN is not a secret in the
+5. Run the bootstrap script:
+   ```bash
+   ./scripts/bootstrap-glitchtip.sh
+   ```
+   It creates the organization, its team, one project per reporting surface
+   (`beyou-backend`, `beyou-web`, `beyou-mobile`), all three monitors, and one
+   alert rule per project with an e-mail recipient wired to it. It then prints
+   the DSNs, the heartbeat check-in URL, and which address alerts will actually
+   reach.
+
+   Safe to run repeatedly, and **not** a no-op on a re-run: creation is
+   `get_or_create`, but every run then re-applies the script's own values over
+   whatever is in the database, so drift is repaired rather than reported as
+   "already present". A second run prints `reconciled …` for anything it had to
+   correct. It never creates duplicates — monitors and rules are keyed on name,
+   the recipient row on `(rule, type, url)`.
+
+   Two values it reads from `.env`, both of which it overwrites in the collector
+   on every run, so a wrong value here beats a right value there:
+   ```bash
+   GLITCHTIP_FRONTEND_TARGET=frontend:3000   # dev; the script's default is prod's frontend:80
+   GLITCHTIP_ALERT_EMAIL=ops@example.com     # empty = the account you registered in step 4
+   ```
+6. Paste the printed DSNs into the corresponding app env vars, and
+   `SNAPSHOT_HEARTBEAT_URL` into this repo's `.env`. A DSN is not a secret in the
    password sense — it is embedded in shipped clients — but keep it out of the
    repo anyway.
 
@@ -90,42 +124,78 @@ Notes:
   are isolated on `glitchtip_net`.
 - Put GlitchTip behind nginx with SSL for any non-local deployment.
 
-### Bootstrap script (do this instead of the manual steps below)
+### Alerts: making one actually arrive
+
+Storing errors and turning a monitor red announces nothing. Two GlitchTip code
+paths do the announcing, and **both go silent unless an `AlertRecipient` row
+exists**:
+
+| Path | Trigger | Requires |
+|---|---|---|
+| Errors | `apps.alerts.tasks.process_event_alerts`, every 60s | a rule with `quantity` **and** `timespan_minutes` set |
+| Uptime + heartbeat | `apps.uptime.tasks.send_monitor_notification`, on state change | a rule on the monitor's project with `uptime = True` |
+
+So the heartbeat monitor — the only thing that can tell you the snapshot
+scheduler wedged — needs `uptime = True` on a rule, or it goes red and tells
+nobody. The bootstrap script creates **one** rule per project covering both
+paths. One and not two on purpose: the uptime lookup joins through the project,
+so a second `uptime = True` rule on `beyou-backend` mails every monitor event
+twice.
+
+The channel is **e-mail, over the same SMTP the backend already uses** — no new
+infrastructure, and that account is known to deliver (it carries the feedback
+acknowledgement mail). Compose `GLITCHTIP_EMAIL_URL` from the same `MAIL_*`
+credentials; `.env.example` has the exact scheme, the STARTTLS-vs-implicit-TLS
+choice, and the three encoding traps that silently break it.
+
+`consolemail://` stays the default so a dev machine does not start mailing.
+It is not a stub — the message is fully composed and printed:
 
 ```bash
-./scripts/bootstrap-glitchtip.sh
+docker logs -f beyou-dev-env-glitchtip-1   # look for "Subject: Error in ..."
 ```
 
-Creates the organization, one project per reporting surface, and all three
-monitors, then prints the DSNs and the heartbeat check-in URL ready to paste into
-the three `.env` files. Safe to run repeatedly — every step is get_or_create, so a
-second run re-applies the same values, overwriting any drift in the collector.
+**The recipient is not the address on the rule.** GlitchTip ignores that field
+for e-mail and instead resolves *every user on the team that owns the project*
+(`users.UserManager.alert_notification_recipients`). That is why
+`GLITCHTIP_ALERT_EMAIL` is applied by the script rather than by Compose: it has
+to make the address a user, put it in the organization, and add it to the team.
+The script creates it with an unusable password — a mailbox, not a login; use
+password-reset if it ever needs the UI. Consequences worth knowing:
 
-In dev, override the frontend monitor's target — the script defaults to prod's
-nginx port:
+- It is **additive**. The account from step 4 keeps receiving alerts. To stop
+  that, remove it from the team or set its per-project alerts to Off under
+  **Settings → Projects → \<project\> → Alerts**.
+- A per-project **Off** beats everything the script does. The script will not
+  overwrite that (it is a human's opt-out) but it prints a `WARNING` naming the
+  user and projects, because otherwise the rule looks wired and mails nobody.
 
-```bash
-GLITCHTIP_FRONTEND_TARGET=frontend:3000 ./scripts/bootstrap-glitchtip.sh
-```
+Reference record — the equivalent by hand, under **Settings → Projects →
+\<project\> → Alerts**, for each of the three projects:
 
-It does **not** create the first account: registration sets a password, which a
-script has no business holding. Register in the UI first, then run this.
+| Field | Value |
+|---|---|
+| Name | `New issue` |
+| Send notification when | `1` event in `1` minute |
+| Also alert on uptime check failures | yes |
+| Recipient | `Email` (no URL — see above) |
 
-The sections below document what the script creates and why, so the setup stays
-recoverable if the script ever stops matching a newer GlitchTip.
+Names must match `scripts/bootstrap-glitchtip.py` exactly; the script keys rules
+on `(project, name)` and will otherwise create a second one alongside yours.
 
 ### Monitors
 
-Three monitors, answering three different questions. None is created by Compose —
-GlitchTip monitors live in its database, created through the UI or its API — so
-recreating them after a `GLITCHTIP_RETENTION_DAYS` wipe, a volume reset, or a move
-to a new host means redoing these steps.
+Three monitors, answering three different questions. The bootstrap script creates
+all three — the tables below are the reference record of what it sets and why.
+None is created by Compose: GlitchTip monitors live in its database, so a
+`GLITCHTIP_RETENTION_DAYS` wipe, a volume reset, or a move to a new host means
+re-running the script (not redoing these tables by hand).
 
-All three live under **Uptime Monitors → New Monitor** in the GlitchTip UI. Set
-each monitor's project to the one named in its table below, so alerts land with
-that surface's error events, and attach a notification target
-(**Settings → Organization → Alerts**) — a monitor nobody is told about is not a
-monitor.
+If you ever do have to rebuild one manually, it is **Uptime Monitors → New
+Monitor**, with the monitor's project set to the one named in its table so alerts
+land with that surface's error events — and it still needs the project's alert
+rule from [Alerts](#alerts-making-one-actually-arrive) to have `uptime = True`,
+or it goes red and tells nobody. A monitor nobody is told about is not a monitor.
 
 > **The names below must match `scripts/bootstrap-glitchtip.py` exactly.** The
 > script keys every monitor on its `name` via `get_or_create`. Create one by hand
@@ -259,14 +329,20 @@ Two mechanisms cover that, both in `docker-compose.monitoring.yml`:
   in the compose file. `up{job="glitchtip"}` is then a liveness signal owned by
   the one component that is *not* the collector. No extra exporter is involved.
 
-> **Still missing: somewhere for an alert to go.** There are no `rule_files`, no
-> alertmanager and no Grafana alert rules, because no notification channel has
-> been chosen yet. Outages are currently *observable* but nothing *announces*
-> them — you still have to look. When a channel is picked, wire it up in
-> `monitoring/prometheus/prometheus.yml` (an `alerting:` block plus `rule_files:`)
-> and make `up{job="glitchtip"} == 0` the first rule. GlitchTip's own alerts also
-> need a real `GLITCHTIP_EMAIL_URL`; the default `consolemail://` only writes to
-> the container log.
+> **Both of these are still look-at-it signals.** Everything GlitchTip watches
+> now announces itself by e-mail (see
+> [Alerts](#alerts-making-one-actually-arrive)), but *collector death* does not:
+> Prometheus scrapes `up{job="glitchtip"}` and nothing evaluates it, and the
+> Compose healthcheck only changes what `docker ps` prints. So a wedged collector
+> still has to be noticed rather than reported.
+>
+> That gap is deliberate, not an oversight. GlitchTip cannot be the thing that
+> announces GlitchTip is down, and closing it properly means either an
+> alertmanager (`alerting:` + `rule_files:` in
+> `monitoring/prometheus/prometheus.yml`, with `up{job="glitchtip"} == 0` as the
+> first rule) or Grafana's own alerting — a second notification system to own,
+> which was consciously not introduced alongside the first. Until then, treat
+> "GlitchTip has gone quiet" as a thing to check, not a thing to trust.
 
 ## Ports
 - Frontend: 3000
