@@ -49,7 +49,12 @@ services:
     environment:
       POSTGRES_DB: ${GLITCHTIP_DB_NAME:-glitchtip}
       POSTGRES_USER: ${GLITCHTIP_DB_USER:-glitchtip}
-      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:-glitchtip}
+      # Required on BOTH sides, deliberately. A default here with a required
+      # value on the client's DATABASE_URL is the worse failure: Postgres only
+      # reads POSTGRES_PASSWORD on first init, so once the volume exists this
+      # value is inert — changing it later silently breaks the connection
+      # instead of rotating anything. Same variable, same expectation, both ends.
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:?Must set GLITCHTIP_DB_PASSWORD}
     volumes:
       # Postgres 18 images relocated PGDATA; the declared volume is the whole
       # /var/lib/postgresql tree, not /var/lib/postgresql/data.
