@@ -99,7 +99,7 @@ Notes:
 Creates the organization, one project per reporting surface, and all three
 monitors, then prints the DSNs and the heartbeat check-in URL ready to paste into
 the three `.env` files. Safe to run repeatedly — every step is get_or_create, so a
-second run reports "already present" and changes nothing.
+second run re-applies the same values, overwriting any drift in the collector.
 
 In dev, override the frontend monitor's target — the script defaults to prod's
 nginx port:

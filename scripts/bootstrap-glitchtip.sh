@@ -16,6 +16,16 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
+# Read .env so GLITCHTIP_FRONTEND_TARGET has a persistent home rather than
+# needing a manual prefix every run — forgetting it let reconcile() rewrite a
+# correct dev target back to the production default.
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 container="$(docker ps --filter "name=glitchtip-1" --filter "status=running" --format '{{.Names}}' | head -1)"
 
 if [ -z "$container" ]; then
