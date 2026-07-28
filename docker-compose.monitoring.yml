@@ -98,9 +98,37 @@ services:
       # beyou_net, so the guard has to be relaxed for the U17 monitors.
       GLITCHTIP_UPTIME_ALLOW_PRIVATE_IPS: "True"
       GLITCHTIP_ENABLE_UPTIME: "True"
+      # Exposes GlitchTip's own django-prometheus endpoint at GET /metrics (off
+      # by default). Scraped as job "glitchtip" in monitoring/prometheus/prometheus.yml
+      # so the collector's liveness is observable from something that is NOT the
+      # collector — see the long comment there for why that matters.
+      #
+      # The view is unauthenticated. It exports only counts
+      # (glitchtip_organizations, glitchtip_projects_total) plus django-prometheus
+      # request/db histograms — no org names, no DSNs, no event contents — and
+      # port 8000 is loopback-bound, so the added surface is bounded. Anything
+      # that can already reach beyou_net can read it.
+      ENABLE_OBSERVABILITY_API: "True"
     volumes:
       # Sourcemap / debug-symbol uploads.
       - glitchtip_uploads:/code/uploads
+    healthcheck:
+      # Without this, Compose reported the collector "Up" while it was wedged —
+      # and since every alert rule, every notification and all three app DSNs
+      # terminate in GlitchTip, a wedged collector makes the entire stack look
+      # quiet instead of broken.
+      #
+      # /code/healthcheck.py ships in the image for exactly this purpose (GETs
+      # /_health/ on localhost:8000, exits 0 only on HTTP 200). Preferred over a
+      # hand-rolled probe: it tracks the health path across upgrades, and the
+      # image carries neither curl nor wget — python is the only client in it.
+      test: ["CMD", "python", "/code/healthcheck.py"]
+      interval: 15s
+      timeout: 10s
+      # First boot applies migrations before it starts serving, which takes a
+      # minute or two — without this the container reports unhealthy the whole time.
+      start_period: 120s
+      retries: 5
     ports:
       # Loopback-bound. GlitchTip lets the FIRST account self-register as admin
       # regardless of ENABLE_USER_REGISTRATION, so between `up` and the moment

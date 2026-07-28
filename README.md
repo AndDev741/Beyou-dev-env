@@ -96,10 +96,17 @@ Notes:
 ./scripts/bootstrap-glitchtip.sh
 ```
 
-Creates the organization, one project per reporting surface, and both monitors,
-then prints the DSNs and the heartbeat check-in URL ready to paste into the three
-`.env` files. Safe to run repeatedly — every step is get_or_create, so a second
-run reports "already present" and changes nothing.
+Creates the organization, one project per reporting surface, and all three
+monitors, then prints the DSNs and the heartbeat check-in URL ready to paste into
+the three `.env` files. Safe to run repeatedly — every step is get_or_create, so a
+second run reports "already present" and changes nothing.
+
+In dev, override the frontend monitor's target — the script defaults to prod's
+nginx port:
+
+```bash
+GLITCHTIP_FRONTEND_TARGET=frontend:3000 ./scripts/bootstrap-glitchtip.sh
+```
 
 It does **not** create the first account: registration sets a password, which a
 script has no business holding. Register in the UI first, then run this.
@@ -109,26 +116,35 @@ recoverable if the script ever stops matching a newer GlitchTip.
 
 ### Monitors
 
-Two monitors, answering two different questions. Neither is created by Compose —
+Three monitors, answering three different questions. None is created by Compose —
 GlitchTip monitors live in its database, created through the UI or its API — so
 recreating them after a `GLITCHTIP_RETENTION_DAYS` wipe, a volume reset, or a move
 to a new host means redoing these steps.
 
-Both live under **Uptime Monitors → New Monitor** in the GlitchTip UI. Set the
-project to `beyou-backend` so the alerts land with the backend's error events, and
-attach a notification target (**Settings → Organization → Alerts**) — a monitor
-nobody is told about is not a monitor.
+All three live under **Uptime Monitors → New Monitor** in the GlitchTip UI. Set
+each monitor's project to the one named in its table below, so alerts land with
+that surface's error events, and attach a notification target
+(**Settings → Organization → Alerts**) — a monitor nobody is told about is not a
+monitor.
+
+> **The names below must match `scripts/bootstrap-glitchtip.py` exactly.** The
+> script keys every monitor on its `name` via `get_or_create`. Create one by hand
+> under a different name and the next bootstrap run will not recognise it — you
+> get two monitors polling the same thing, and the hand-made one has none of the
+> `confirmation_threshold` tuning, so it alerts on a single dropped poll.
 
 #### 1. Backend uptime — "is the process answering?"
 
 | Field | Value |
 |---|---|
-| Name | `beyou-backend health` |
+| Name | `Beyou backend health` |
+| Project | `beyou-backend` |
 | Monitor type | `GET` |
 | URL | `http://backend:9091/actuator/health` |
 | Expected status | `200` |
 | Interval | `60` seconds |
 | Timeout | `10` seconds |
+| Confirmation threshold | `2` (two consecutive failures — one dropped poll during a restart is not an outage) |
 
 Use the in-network URL, not `localhost` — inside the GlitchTip container
 `localhost` is GlitchTip itself. The management server is deliberately not a
@@ -156,9 +172,11 @@ check-in **not arriving**.
 
 | Field | Value |
 |---|---|
-| Name | `beyou-backend snapshot job` |
+| Name | `Snapshot scheduler heartbeat` |
+| Project | `beyou-backend` |
 | Monitor type | `Heartbeat` |
 | Expected interval | `5400` seconds (90 min) |
+| Confirmation threshold | `1` (the interval already carries 30 minutes of slack — do not add more) |
 
 The job runs hourly (`@Scheduled(cron = "0 0 * * * *")`), checking every distinct
 user timezone and writing snapshots for those where the local clock just crossed
@@ -187,6 +205,68 @@ Behaviour worth knowing before you trust the monitor:
   loop would keep the monitor green forever.
 - The `test` and `e2e` profiles pin the URL empty, so test runs can never check in
   on behalf of a job that is not running.
+
+#### 3. Web frontend — "is the app being served at all?"
+
+The two monitors above only ever look at the backend. A healthy API behind a
+frontend that stopped being served is still a total outage for every user, and
+nothing above would notice it.
+
+| Field | Value |
+|---|---|
+| Name | `Beyou web frontend` |
+| Project | `beyou-web` |
+| Monitor type | `TCP Port` |
+| URL | `frontend:3000` in dev, `frontend:80` in prod (see below) |
+| Interval | `60` seconds |
+| Timeout | `10` seconds |
+| Confirmation threshold | `2` |
+
+`TCP Port` monitors carry the port inside the URL field — GlitchTip splits that
+string on `:` and hands both halves to `asyncio.open_connection`. There is no
+separate port input, and `Expected status` is ignored (it is only read by the
+HTTP monitor types: GET, POST, PING).
+
+The port differs by environment, and getting it wrong is worse than having no
+monitor — it leaves a permanently red light nobody believes. Dev runs Vite
+directly on **3000**; prod serves the built assets through nginx on **80**. The
+bootstrap script defaults to prod, so a dev run needs the override:
+
+```bash
+GLITCHTIP_FRONTEND_TARGET=frontend:3000 ./scripts/bootstrap-glitchtip.sh
+```
+
+This is a TCP connect, not an HTTP fetch: it proves something is accepting
+connections on that port, not that the app renders or that its JS bundle loads.
+
+### Watching the collector itself
+
+Every alarm described above is raised *by* GlitchTip — the monitors live in its
+database, the notifications leave its process, and all three apps POST their
+errors to it. So GlitchTip cannot be what tells you GlitchTip is down: when it
+wedges, every signal goes quiet at once and the stack looks calm.
+
+Two mechanisms cover that, both in `docker-compose.monitoring.yml`:
+
+- **Compose healthcheck** on the `glitchtip` service, running the image's own
+  `/code/healthcheck.py` (`GET /_health/`, exit 0 only on 200). `docker ps` and
+  `docker inspect --format '{{.State.Health.Status}}' <container>` then report
+  `unhealthy` instead of a misleading `Up`. Allow up to `start_period` (120s) on
+  a first boot — migrations run before it starts serving.
+- **Prometheus scrape** of `glitchtip:8000/metrics`, as job `glitchtip` in
+  `monitoring/prometheus/prometheus.yml`. GlitchTip bundles django-prometheus;
+  the endpoint is off by default and is switched on by `ENABLE_OBSERVABILITY_API`
+  in the compose file. `up{job="glitchtip"}` is then a liveness signal owned by
+  the one component that is *not* the collector. No extra exporter is involved.
+
+> **Still missing: somewhere for an alert to go.** There are no `rule_files`, no
+> alertmanager and no Grafana alert rules, because no notification channel has
+> been chosen yet. Outages are currently *observable* but nothing *announces*
+> them — you still have to look. When a channel is picked, wire it up in
+> `monitoring/prometheus/prometheus.yml` (an `alerting:` block plus `rule_files:`)
+> and make `up{job="glitchtip"} == 0` the first rule. GlitchTip's own alerts also
+> need a real `GLITCHTIP_EMAIL_URL`; the default `consolemail://` only writes to
+> the container log.
 
 ## Ports
 - Frontend: 3000
