@@ -145,7 +145,11 @@ def resolve_recipient():
     password-reset flow, which sets a password this script never sees.
     """
     if not ALERT_EMAIL or ALERT_EMAIL.lower() == owner.email.lower():
-        print(f"alert recipient {owner.email}: first registered account (GLITCHTIP_ALERT_EMAIL unset)")
+        # Same outcome either way, but say which — reporting "unset" when the
+        # variable is set and merely matches sends the next person debugging
+        # this to look in the wrong place.
+        why = "GLITCHTIP_ALERT_EMAIL matches it" if ALERT_EMAIL else "GLITCHTIP_ALERT_EMAIL unset"
+        print(f"alert recipient {owner.email}: first registered account ({why})")
         user = owner
     else:
         # The email column carries a case-insensitive collation, so this match
