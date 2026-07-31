@@ -1,0 +1,70 @@
+// Alloy's one job here: tail the stdout of this stack's containers through the
+// Docker API and push it to Loki. No file mounts, no path conventions, no
+// in-app log shippers — anything a container prints is collected, which is
+// also the rule for making something observable: print it.
+
+// Discover every container on the host through the Docker socket. Discovery
+// sees everything; the relabel block below decides what is actually tailed.
+discovery.docker "host_containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "beyou_containers" {
+  targets = discovery.docker.host_containers.targets
+
+  // Tail ONLY Beyou compose projects (beyou-dev-env, beyou-e2e, ...). This
+  // host runs stacks that have nothing to do with Beyou, and pulling their
+  // logs into a Loki that anyone with Grafana access can query is a data
+  // exposure, not a convenience. The filter keys on the Compose project name,
+  // which Docker derives from the checkout directory — deploy this repo from
+  // a directory whose name does not start with "beyou" (case-insensitive)
+  // and logs silently stop flowing; fix the directory name or this regex.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "(?i)beyou.*"
+    action        = "keep"
+  }
+
+  // Stream labels. `service` is the stable, human name ("backend", "frontend",
+  // "db") and the label to query by; `container` disambiguates replicas and
+  // e2e-vs-dev; `project` separates the stacks. Deliberately no high-churn
+  // labels (no container id, no image tag) — every distinct label combination
+  // is a separate stream in Loki, and stream churn is what makes it slow.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "beyou" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.beyou_containers.output
+  refresh_interval = "15s"
+  // Read positions live under --storage.path (a named volume), so an Alloy
+  // restart resumes where it left off instead of re-ingesting every log line
+  // the daemon still holds.
+  forward_to = [loki.write.local.receiver]
+}
+
+// No processing pipeline on purpose. Level detection happens server-side in
+// Loki (limits_config.discover_log_levels in monitoring/loki/loki.yml), and
+// raw lines stay grep-able. Add a loki.process stage here only for something
+// detection cannot do — e.g. dropping a noisy health-check route.
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

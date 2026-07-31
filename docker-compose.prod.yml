@@ -1,7 +1,15 @@
+# See docker-compose.yml for why; anchors don't cross files.
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     image: ghcr.io/anddev741/beyou-backend:latest
     restart: unless-stopped
+    logging: *bounded-logging
     env_file:
       - .env
     environment:
@@ -24,6 +32,7 @@ services:
   frontend:
     image: ghcr.io/anddev741/beyou-web:latest
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
       - "127.0.0.1:3000:80"
     depends_on:
@@ -36,6 +45,7 @@ services:
   watchtower:
     image: nickfedor/watchtower
     restart: unless-stopped
+    logging: *bounded-logging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --label-enable --cleanup --interval 300

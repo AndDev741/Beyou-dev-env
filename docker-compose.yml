@@ -1,7 +1,20 @@
+# Docker's json-file driver keeps logs forever by default; on a long-lived
+# host that is an unbounded disk leak. 10m x 3 bounds each container at ~30MB
+# of `docker logs` history. Loki (docker-compose.monitoring.yml) is the place
+# for real history — Alloy tails the Docker API, so rotation loses it nothing.
+# Anchors don't cross files: each compose file that defines services carries
+# its own copy of this block.
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:15
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-beyou}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
