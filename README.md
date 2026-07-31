@@ -52,12 +52,72 @@ Will be like this:
 ## Monitoring & error telemetry
 
 `docker-compose.monitoring.yml` is an optional overlay carrying Prometheus,
-Grafana, and GlitchTip (self-hosted error telemetry, Sentry-API compatible).
+Grafana, GlitchTip (self-hosted error telemetry, Sentry-API compatible), and
+Loki + Alloy (unified log aggregation).
 
 ```
 ./scripts/up-dev.sh --monitoring
 ./scripts/down.sh dev --monitoring
 ```
+
+The division of labour: **Prometheus** answers "how is it performing",
+**GlitchTip** answers "what broke" (error events, including from real users'
+browsers), **Loki** answers "what happened" (every log line every container
+printed, queryable for 30 days). All three surface in the same Grafana.
+
+### Unified logs (Loki + Alloy)
+
+Zero app configuration: anything a container writes to stdout is collected.
+Alloy tails every container in the Beyou compose projects through the Docker
+API and pushes to Loki; Grafana queries Loki as a provisioned datasource. That
+covers the Spring backend, the frontend (Vite in dev, nginx in prod), Postgres,
+and the monitoring services themselves — identically in dev and prod, because
+it is the same overlay.
+
+Where to look:
+
+- **Grafana → Dashboards → Beyou Logs** — volume/error charts plus a filterable
+  log browser (project, service, level, free-text search).
+- **Grafana → Explore → Loki** for ad-hoc queries. The bread and butter:
+
+  ```logql
+  {service="backend"}                                  # everything the backend printed
+  {service="backend"} | detected_level="error"         # errors only
+  {service=~"backend|frontend"} |~ "(?i)nullpointer"   # regex search across services
+  {project="beyou-e2e"}                                # the e2e stack, when it runs
+  ```
+
+  `detected_level` is attached server-side by Loki (it parses JSON, logfmt and
+  plain-text keywords), which is why neither the apps nor Alloy do any log
+  parsing.
+
+Behaviour worth knowing before you trust it:
+
+- **Scope**: Alloy keeps only containers whose Compose project name starts with
+  `beyou` (case-insensitive) — this host runs unrelated stacks, and their logs
+  do not belong in a Loki that anyone with Grafana access can query. The
+  project name comes from the checkout directory name; deploy this repo from a
+  directory not starting with `beyou` and logs silently stop flowing — fix the
+  directory name or the `keep` rule in `monitoring/alloy/config.alloy`.
+- **Retention**: 30 days, enforced by Loki's compactor
+  (`monitoring/loki/loki.yml`), same number as `GLITCHTIP_RETENTION_DAYS`.
+  Log history now lives in Loki's `loki_data` volume — `docker logs` on the
+  host only holds the rotated tail (10m × 3 files per container, set in every
+  compose file).
+- **Exposure**: Loki has no host port at all — its push/query API is
+  unauthenticated, so its only clients are Alloy and Grafana over `beyou_net`,
+  and the thing with a login (Grafana) is the read path. Alloy's debugging UI
+  (pipeline health, discovered containers) is loopback-bound on
+  `ALLOY_PORT` (12345), same treatment as Prometheus.
+- **Own liveness**: Prometheus scrapes both (`up{job="loki"}`,
+  `up{job="alloy"}`) because a dead log pipeline fails silent — ingestion just
+  stops. Alloy buffers and retries while Loki is down; the buffer is finite,
+  and `loki_write_dropped_entries_total` on the `alloy` job is the "logs were
+  actually lost" signal.
+- **Not captured**: logs from real users' browsers. That is GlitchTip's job
+  (errors with breadcrumbs via the Sentry SDKs). Do not try to close that gap
+  by exposing a Loki push endpoint to browsers — an unauthenticated ingest
+  path from the public internet is an abuse surface, not a feature.
 
 ### GlitchTip first-run
 
@@ -351,3 +411,5 @@ Two mechanisms cover that, both in `docker-compose.monitoring.yml`:
 - Prometheus: 9090
 - Grafana: 3001
 - GlitchTip: 8000
+- Alloy (debug UI): 12345
+- Loki: no host port on purpose — query it through Grafana

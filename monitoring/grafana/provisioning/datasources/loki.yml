@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    # proxy = Grafana's server queries Loki over beyou_net on the browser's
+    # behalf. Loki itself is never published to the host — its push/query API
+    # is unauthenticated, and this datasource plus Alloy are its only clients.
+    access: proxy
+    url: http://loki:3100
+    uid: loki
+    isDefault: false
+    editable: false

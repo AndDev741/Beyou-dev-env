@@ -1,3 +1,12 @@
+# Bounded on-disk logs for every service in this file. Alloy reads through the
+# Docker API, not the files, so rotation never costs Loki a line — it only
+# stops `docker logs` history growing without limit.
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     ports:
@@ -10,6 +19,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.3.0
     restart: unless-stopped
+    logging: *bounded-logging
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
@@ -22,8 +32,16 @@ services:
       - beyou_net
 
   grafana:
-    image: grafana/grafana:11.6.0
+    # Keep this pin reasonably current. The Drilldown apps (Logs Drilldown et
+    # al.) are downloaded and AUTO-UPDATED by Grafana itself, and new plugin
+    # builds eventually assume a newer Grafana than a stale pin — 11.6.0 broke
+    # exactly that way: Logs Drilldown 1.0.39 imported react/jsx-runtime,
+    # which 11.6.0's module registry doesn't expose, and the app died with
+    # "App not found" while claiming compatibility. A pinned Grafana with
+    # unpinned plugins is a slow-motion version conflict.
+    image: grafana/grafana:12.4.6
     restart: unless-stopped
+    logging: *bounded-logging
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -44,6 +62,70 @@ services:
     networks:
       - beyou_net
 
+  # --- Loki + Alloy: unified log aggregation ----------------------------------
+  # Every container in the Beyou compose projects already writes its logs to
+  # Docker stdout — Spring backend, nginx/Vite frontend, Postgres, and the
+  # monitoring services themselves. Alloy tails all of them through the Docker
+  # API and pushes to Loki; Grafana (above) queries Loki as a provisioned
+  # datasource. Complementary to GlitchTip, not overlapping: GlitchTip answers
+  # "what broke" (error events, incl. browsers), Loki answers "what happened"
+  # (every log line, 30-day retention).
+  loki:
+    image: grafana/loki:3.7.4
+    restart: unless-stopped
+    logging: *bounded-logging
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    # NO published port, deliberately — Loki's push and query APIs are
+    # unauthenticated (auth_enabled: false), and its only clients are Alloy
+    # and Grafana, both on beyou_net. Reading logs happens through Grafana,
+    # which is the component with a login in front of it.
+    #
+    # No compose healthcheck, and not for lack of trying: the image is
+    # distroless (no shell, no wget/curl — verified against 3.7.4), so there is
+    # nothing to exec a probe with. Liveness is `up{job="loki"}` via the
+    # Prometheus scrape in monitoring/prometheus/prometheus.yml, which is the
+    # signal that matters anyway — a dead log store fails silent, and only
+    # something OUTSIDE the container notices silence.
+    networks:
+      - beyou_net
+
+  alloy:
+    image: grafana/alloy:v1.18.0
+    restart: unless-stopped
+    logging: *bounded-logging
+    command:
+      # Listen on 0.0.0.0 INSIDE the container (image default is the same) so
+      # Prometheus can scrape alloy:12345 over beyou_net; what the host sees
+      # is governed by the ports: entry below, not by this flag.
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only socket mount, same pattern watchtower already uses in
+      # docker-compose.prod.yml (and watchtower's is read-write). :ro protects
+      # the socket file, not the API — a process holding this socket can still
+      # control the Docker daemon, i.e. the host. Acceptable here because the
+      # container runs one Grafana-built binary with a config from this repo,
+      # and log collection via the API is what keeps app containers free of
+      # log-shipper sidecars and file-path conventions.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Read positions, so a restart resumes tailing instead of re-ingesting.
+      - alloy_data:/var/lib/alloy/data
+    ports:
+      # Alloy's debugging UI (component graph, discovered targets, live
+      # pipeline health). Unauthenticated and it exposes /-/reload, so it gets
+      # the same loopback-only treatment as Prometheus above.
+      - "${MONITORING_BIND:-127.0.0.1}:${ALLOY_PORT:-12345}:12345"
+    depends_on:
+      - loki
+    networks:
+      - beyou_net
+
   # --- GlitchTip: self-hosted error telemetry collector -----------------------
   # Speaks the Sentry API, so the official Sentry SDKs (backend, web, mobile)
   # point at it by DSN. Lives here rather than in the base stack because it is
@@ -56,6 +138,7 @@ services:
   glitchtip-db:
     image: postgres:18.4-alpine
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       POSTGRES_DB: ${GLITCHTIP_DB_NAME:-glitchtip}
       POSTGRES_USER: ${GLITCHTIP_DB_USER:-glitchtip}
@@ -80,12 +163,14 @@ services:
   glitchtip-valkey:
     image: valkey/valkey:9.1-alpine
     restart: unless-stopped
+    logging: *bounded-logging
     networks:
       - glitchtip_net
 
   glitchtip:
     image: glitchtip/glitchtip:6.2.2
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       # GlitchTip 6 ships web + background worker + startup migrations in one
       # process under this role. There is no separate worker/migrate service to
@@ -163,6 +248,8 @@ services:
 
 volumes:
   grafana_data: {}
+  loki_data: {}
+  alloy_data: {}
   glitchtip_pg_data: {}
   glitchtip_uploads: {}
 

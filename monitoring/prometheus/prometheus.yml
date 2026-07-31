@@ -38,3 +38,20 @@ scrape_configs:
     metrics_path: "/metrics"
     static_configs:
       - targets: ["glitchtip:8000"]
+
+  # Watches the log pipeline, for the same reason job "glitchtip" watches the
+  # error collector: a dead log store fails SILENT, not loud. Queries error in
+  # Grafana only when someone looks; ingestion just stops. `up{job="loki"}` and
+  # `up{job="alloy"}` are the signals that logging quietly died — and Alloy's
+  # own `loki_write_dropped_entries_total` says whether logs are being lost
+  # while Loki is down (Alloy retries with backoff, but its send buffer is
+  # finite and drops oldest-first once full).
+  - job_name: "loki"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: "alloy"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["alloy:12345"]
