@@ -1,7 +1,11 @@
 services:
   backend:
     ports:
-      - "${MANAGEMENT_PORT:-9091}:${MANAGEMENT_PORT:-9091}"
+      # Loopback-bound like every service in docker-compose.prod.yml. This
+      # overlay was the outlier: an actuator, an unauthenticated Prometheus query
+      # API and a Grafana admin login were all reachable from the network, and
+      # up-prod.sh --monitoring makes that a supported production start.
+      - "${MONITORING_BIND:-127.0.0.1}:${MANAGEMENT_PORT:-9091}:${MANAGEMENT_PORT:-9091}"
 
   prometheus:
     image: prom/prometheus:v3.3.0
@@ -9,7 +13,9 @@ services:
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      # /api/v1/query is unauthenticated — anything reachable here can read every
+      # metric the stack collects.
+      - "${MONITORING_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
     depends_on:
       - backend
     networks:
@@ -24,19 +30,144 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Required, no default. The previous `:-admin` combined with an empty
+      # GRAFANA_ADMIN_PASSWORD= in .env.example meant an unedited copy published
+      # Grafana as admin/admin — and a Grafana admin can add a datasource that
+      # proxies anywhere inside beyou_net.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Must set GRAFANA_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
     ports:
-      - "${GRAFANA_PORT:-3001}:3000"
+      - "${MONITORING_BIND:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
     depends_on:
       - prometheus
     networks:
       - beyou_net
 
+  # --- GlitchTip: self-hosted error telemetry collector -----------------------
+  # Speaks the Sentry API, so the official Sentry SDKs (backend, web, mobile)
+  # point at it by DSN. Lives here rather than in the base stack because it is
+  # observability infrastructure alongside Prometheus/Grafana, and because it
+  # must sit on `beyou_net` to reach the backend management port (9091) for the
+  # uptime + heartbeat monitors.
+  #
+  # Its Postgres and Valkey are deliberately NOT on `beyou_net` — only the web
+  # service is dual-homed, so the app network cannot see GlitchTip's datastores.
+  glitchtip-db:
+    image: postgres:18.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${GLITCHTIP_DB_NAME:-glitchtip}
+      POSTGRES_USER: ${GLITCHTIP_DB_USER:-glitchtip}
+      # Required on BOTH sides, deliberately. A default here with a required
+      # value on the client's DATABASE_URL is the worse failure: Postgres only
+      # reads POSTGRES_PASSWORD on first init, so once the volume exists this
+      # value is inert — changing it later silently breaks the connection
+      # instead of rotating anything. Same variable, same expectation, both ends.
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:?Must set GLITCHTIP_DB_PASSWORD}
+    volumes:
+      # Postgres 18 images relocated PGDATA; the declared volume is the whole
+      # /var/lib/postgresql tree, not /var/lib/postgresql/data.
+      - glitchtip_pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GLITCHTIP_DB_USER:-glitchtip} -d ${GLITCHTIP_DB_NAME:-glitchtip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - glitchtip_net
+
+  glitchtip-valkey:
+    image: valkey/valkey:9.1-alpine
+    restart: unless-stopped
+    networks:
+      - glitchtip_net
+
+  glitchtip:
+    image: glitchtip/glitchtip:6.2.2
+    restart: unless-stopped
+    environment:
+      # GlitchTip 6 ships web + background worker + startup migrations in one
+      # process under this role. There is no separate worker/migrate service to
+      # run any more; migrations execute automatically on container start.
+      SERVER_ROLE: all_in_one
+      DATABASE_URL: postgres://${GLITCHTIP_DB_USER:-glitchtip}:${GLITCHTIP_DB_PASSWORD:?Must set GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/${GLITCHTIP_DB_NAME:-glitchtip}
+      VALKEY_URL: redis://glitchtip-valkey:6379
+      # Required. No default on purpose — an empty value fails the container
+      # loudly rather than shipping a known secret. openssl rand -hex 32
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:?Must set GLITCHTIP_SECRET_KEY — openssl rand -hex 32}
+      GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://localhost:8000}
+      # consolemail:// prints mail to the container log — fine for local dev,
+      # but new-issue alerts (R17) need a real SMTP URL in a deployed stack.
+      EMAIL_URL: ${GLITCHTIP_EMAIL_URL:-consolemail://}
+      DEFAULT_FROM_EMAIL: ${GLITCHTIP_FROM_EMAIL:-glitchtip@localhost}
+      # Registration lock: the FIRST account can always self-register; every
+      # later signup is blocked while this is False. Leave it False.
+      ENABLE_USER_REGISTRATION: ${GLITCHTIP_ENABLE_USER_REGISTRATION:-False}
+      ENABLE_ORGANIZATION_CREATION: "False"
+      # Bounded event store. Without this the default is 90 days and the
+      # Postgres volume grows unchecked.
+      GLITCHTIP_RETENTION_DAYS: ${GLITCHTIP_RETENTION_DAYS:-30}
+      # Uptime monitors default to refusing private/RFC1918 targets (SSRF
+      # guard). The backend is only reachable at http://backend:9091 inside
+      # beyou_net, so the guard has to be relaxed for the U17 monitors.
+      GLITCHTIP_UPTIME_ALLOW_PRIVATE_IPS: "True"
+      GLITCHTIP_ENABLE_UPTIME: "True"
+      # Exposes GlitchTip's own django-prometheus endpoint at GET /metrics (off
+      # by default). Scraped as job "glitchtip" in monitoring/prometheus/prometheus.yml
+      # so the collector's liveness is observable from something that is NOT the
+      # collector — see the long comment there for why that matters.
+      #
+      # The view is unauthenticated. It exports only counts
+      # (glitchtip_organizations, glitchtip_projects_total) plus django-prometheus
+      # request/db histograms — no org names, no DSNs, no event contents — and
+      # port 8000 is loopback-bound, so the added surface is bounded. Anything
+      # that can already reach beyou_net can read it.
+      ENABLE_OBSERVABILITY_API: "True"
+    volumes:
+      # Sourcemap / debug-symbol uploads.
+      - glitchtip_uploads:/code/uploads
+    healthcheck:
+      # Without this, Compose reported the collector "Up" while it was wedged —
+      # and since every alert rule, every notification and all three app DSNs
+      # terminate in GlitchTip, a wedged collector makes the entire stack look
+      # quiet instead of broken.
+      #
+      # /code/healthcheck.py ships in the image for exactly this purpose (GETs
+      # /_health/ on localhost:8000, exits 0 only on HTTP 200). Preferred over a
+      # hand-rolled probe: it tracks the health path across upgrades, and the
+      # image carries neither curl nor wget — python is the only client in it.
+      test: ["CMD", "python", "/code/healthcheck.py"]
+      interval: 15s
+      timeout: 10s
+      # First boot applies migrations before it starts serving, which takes a
+      # minute or two — without this the container reports unhealthy the whole time.
+      start_period: 120s
+      retries: 5
+    ports:
+      # Loopback-bound. GlitchTip lets the FIRST account self-register as admin
+      # regardless of ENABLE_USER_REGISTRATION, so between `up` and the moment
+      # you register, whoever reaches this port owns the collector — every error
+      # event and every uploaded source map, which is the web app's source.
+      # Reach it from another host through a tunnel or reverse proxy, never by
+      # publishing it. Override only if you know why.
+      - "${GLITCHTIP_BIND:-127.0.0.1}:${GLITCHTIP_PORT:-8000}:8000"
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+      glitchtip-valkey:
+        condition: service_started
+    networks:
+      - beyou_net
+      - glitchtip_net
+
 volumes:
   grafana_data: {}
+  glitchtip_pg_data: {}
+  glitchtip_uploads: {}
 
 networks:
   beyou_net:
     name: beyou_net
+  glitchtip_net:
+    name: glitchtip_net
