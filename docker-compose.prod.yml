@@ -48,6 +48,18 @@ services:
     logging: *bounded-logging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --label-enable --cleanup --interval 300
+    command:
+      - --label-enable
+      - --cleanup
+      - --interval
+      - "300"
+      # HTTP API on 8080 (the image's EXPOSE): /v1/update is a POST-only
+      # trigger, /v1/metrics is Prometheus exposition. The token is required
+      # with no default on purpose — the API server REFUSES to start with an
+      # empty token, and the resulting crash would silently kill the updater.
+      # Prometheus scrapes /v1/metrics with the same token (see monitoring/prometheus/prometheus.yml.tpl);
+      # GlitchTip TCP-checks the port, which needs no token.
+      - --http-api
+      - --http-api-token=${WATCHTOWER_API_TOKEN:?Must set WATCHTOWER_API_TOKEN — openssl rand -hex 16}
     networks:
       - beyou_net

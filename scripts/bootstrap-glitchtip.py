@@ -3,9 +3,11 @@
 # than this file directly.
 #
 # Creates, only when missing: the organization, its team, one project per
-# reporting surface, the three monitors, and one alert rule per project with an
-# e-mail recipient wired to it. Then prints the DSNs and the heartbeat check-in
-# URL, which are the values a deployment has to configure.
+# reporting surface (backend/web/mobile) plus an infrastructure project, one
+# uptime monitor per Beyou container, the snapshot-scheduler heartbeat, and
+# one alert rule per project with an e-mail recipient wired to it. Then prints
+# the DSNs and the heartbeat check-in URL, which are the values a deployment
+# has to configure.
 #
 # Creation is get_or_create, but the run does NOT stop there: reconcile() writes
 # this file's values back over whatever is in the database, so a second run
@@ -61,21 +63,51 @@ SURFACES = [
     ("beyou-mobile", "Beyou Mobile", "react-native"),
 ]
 
-# The management port is bound to 127.0.0.1, so only a monitor sharing the
-# compose network can reach it. That is why GlitchTip lives in the monitoring
-# overlay rather than on its own host.
-UPTIME_URL = "http://backend:9091/actuator/health"
+# --- uptime monitor targets --------------------------------------------------
+# GlitchTip probes from inside beyou_net, so every target is a CONTAINER
+# address: the container port, never the published host one (most of these are
+# not even published). Defaults match the compose stack; override any of them
+# in .env when a deployment names or ports things differently. A wrong target
+# here leaves the monitor permanently DOWN, which is worse than no monitor —
+# a red light nobody believes.
+def _target(name, default):
+    return os.environ.get(name, "").strip() or default
+
+# The management server answers on 0.0.0.0:9091 INSIDE the container
+# (MANAGEMENT_ADDRESS=0.0.0.0 in .env); 127.0.0.1 is only the host-side binding
+# of the published port. That is why only a monitor sharing the compose network
+# can reach it, and why GlitchTip lives in the monitoring overlay.
+BACKEND_TARGET = _target("GLITCHTIP_BACKEND_TARGET", "http://backend:9091/actuator/health")
+
+# Dev runs Vite directly (3000); prod serves the built app through nginx (80).
+FRONTEND_TARGET = _target("GLITCHTIP_FRONTEND_TARGET", "frontend:80")
+
+DB_TARGET = _target("GLITCHTIP_DB_TARGET", "db:5432")
+# The collector's datastores live on glitchtip_net, and GlitchTip is
+# dual-homed, so it resolves these names even though the app network cannot.
+GLITCHTIP_DB_TARGET = _target("GLITCHTIP_GLITCHTIP_DB_TARGET", "glitchtip-db:5432")
+VALKEY_TARGET = _target("GLITCHTIP_VALKEY_TARGET", "glitchtip-valkey:6379")
+
+LOKI_TARGET = _target("GLITCHTIP_LOKI_TARGET", "http://loki:3100/ready")
+# /-/healthy is stronger than liveness: 500 when ANY component of Alloy's
+# pipeline is unhealthy, which is exactly the signal a log pipeline needs.
+ALLOY_TARGET = _target("GLITCHTIP_ALLOY_TARGET", "http://alloy:12345/-/healthy")
+PROMETHEUS_TARGET = _target("GLITCHTIP_PROMETHEUS_TARGET", "http://prometheus:9090/-/healthy")
+GRAFANA_TARGET = _target("GLITCHTIP_GRAFANA_TARGET", "http://grafana:3000/api/health")
+# Same path the container's own healthcheck.py probes; the collector watching
+# itself is for the Uptime page, NOT for alerting — a wedged GlitchTip cannot
+# send its own alerts, which is what Prometheus' up{job="glitchtip"} is for.
+GLITCHTIP_TARGET = _target("GLITCHTIP_GLITCHTIP_TARGET", "http://glitchtip:8000/_health/")
+
+# watchtower only exists in the prod overlay. Empty (the default) skips the
+# monitor entirely — dev has no watchtower, and a permanently red monitor
+# nobody believes is worse than none. Set GLITCHTIP_WATCHTOWER_TARGET=watchtower:8080
+# where watchtower runs (its HTTP API must be enabled; see docker-compose.prod.yml).
+WATCHTOWER_TARGET = os.environ.get("GLITCHTIP_WATCHTOWER_TARGET", "").strip()
 
 # The snapshot job runs hourly on the hour. 90 minutes leaves room for one slow
 # cycle or a single failed check-in without paging anyone.
 HEARTBEAT_PERIOD_SECONDS = 5400
-
-# GlitchTip probes from inside beyou_net, so this must be the CONTAINER port, not
-# the published one. Dev runs Vite directly (3000); prod serves the built app
-# through nginx (80). Getting this wrong leaves the monitor permanently DOWN in
-# whichever environment was not the default, which is worse than no monitor —
-# a red light nobody believes.
-FRONTEND_TARGET = os.environ.get("GLITCHTIP_FRONTEND_TARGET", "frontend:80")
 
 # Where alerts go. Empty means "the first registered account", which is already
 # a team member and therefore already a valid recipient — so the default stack
@@ -190,61 +222,71 @@ def resolve_recipient():
 
 recipient = resolve_recipient()
 
-backend_project = Project.objects.get(slug="beyou-backend", organization=org)
-
-uptime, created = Monitor.objects.get_or_create(
-    name="Beyou backend health",
-    organization=org,
-    defaults={
-        "project": backend_project,
-        "monitor_type": "GET",
-        "url": UPTIME_URL,
-        "expected_status": 200,
-        "interval": 60,
-        "timeout": 10,
+def reconcile_monitor(name, project, monitor_type, url=None, expected_status=None,
+                      interval=60, timeout=10, confirmation_threshold=2):
+    """get_or_create + reconcile for one uptime monitor. TCP Port monitors
+    carry the port in the URL ("frontend:3000") and expected_status stays
+    unset — GlitchTip's runner calls url.split(":") and feeds the parts to
+    asyncio.open_connection; expected_status is only read on the HTTP paths
+    (GET / POST / PING)."""
+    defaults = {
+        "project": project,
+        "monitor_type": monitor_type,
+        "interval": interval,
+        "timeout": timeout,
         # Two consecutive failures before alerting: one dropped poll during a
         # restart is not an outage.
-        "confirmation_threshold": 2,
-    },
-)
-reconcile(uptime, project=backend_project, monitor_type="GET", url=UPTIME_URL,
-          expected_status=200, interval=60, timeout=10, confirmation_threshold=2)
-print(f"monitor 'Beyou backend health': {'created' if created else 'already present'}")
+        "confirmation_threshold": confirmation_threshold,
+    }
+    if url is not None:
+        defaults["url"] = url
+    if expected_status is not None:
+        defaults["expected_status"] = expected_status
+    monitor, created = Monitor.objects.get_or_create(
+        name=name, organization=org, defaults=defaults
+    )
+    reconcile(monitor, **defaults)
+    print(f"monitor '{name}': {'created' if created else 'already present'}")
+    return monitor
 
-heartbeat, created = Monitor.objects.get_or_create(
-    name="Snapshot scheduler heartbeat",
-    organization=org,
-    defaults={
-        "project": backend_project,
-        "monitor_type": "Heartbeat",
-        "interval": HEARTBEAT_PERIOD_SECONDS,
-        "confirmation_threshold": 1,
-    },
+backend_project = Project.objects.get(slug="beyou-backend", organization=org)
+reconcile_monitor("Beyou backend health", backend_project, "GET", BACKEND_TARGET, 200)
+heartbeat = reconcile_monitor(
+    "Snapshot scheduler heartbeat", backend_project, "Heartbeat",
+    interval=HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
 )
-reconcile(heartbeat, project=backend_project, monitor_type="Heartbeat",
-          interval=HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1)
-print(f"monitor 'Snapshot scheduler heartbeat': {'created' if created else 'already present'}")
 
-# TCP Port monitors carry the port in the URL ("frontend:3000"), not in
-    # expected_status.  GlitchTip's uptime runner calls url.split(":") and
-    # feeds the two parts to asyncio.open_connection — expected_status is
-    # only read by the HTTP monitor path (GET / POST / PING).
 frontend_project = Project.objects.get(slug="beyou-web", organization=org)
-web, created = Monitor.objects.get_or_create(
-    name="Beyou web frontend",
+reconcile_monitor("Beyou web frontend", frontend_project, "TCP Port", FRONTEND_TARGET)
+
+# --- infrastructure monitors -------------------------------------------------
+# One project per surface, same rule as the app projects: alerts join through
+# the project, so infra monitors get their own project and their own alert
+# rule, and a glitchtip-db outage is not mailed from the "Beyou Backend"
+# project. No DSN: nothing reports errors to it, it only hosts monitors.
+infra_project, created = Project.objects.get_or_create(
+    slug="beyou-infra",
     organization=org,
-    defaults={
-        "project": frontend_project,
-        "monitor_type": "TCP Port",
-        "url": FRONTEND_TARGET,
-        "interval": 60,
-        "timeout": 10,
-        "confirmation_threshold": 2,
-    },
+    defaults={"name": "Beyou Infra", "platform": "other"},
 )
-reconcile(web, project=frontend_project, monitor_type="TCP Port", url=FRONTEND_TARGET,
-          interval=60, timeout=10, confirmation_threshold=2)
-print(f"monitor 'Beyou web frontend': {'created' if created else 'already present'}")
+infra_project.teams.add(team)
+print(f"project beyou-infra: {'created' if created else 'already present'}")
+
+INFRA_MONITORS = [
+    ("Beyou postgres (app DB)", "TCP Port", DB_TARGET, None),
+    ("Beyou glitchtip postgres", "TCP Port", GLITCHTIP_DB_TARGET, None),
+    ("Beyou glitchtip valkey", "TCP Port", VALKEY_TARGET, None),
+    ("Beyou loki", "GET", LOKI_TARGET, 200),
+    ("Beyou alloy", "GET", ALLOY_TARGET, 200),
+    ("Beyou prometheus", "GET", PROMETHEUS_TARGET, 200),
+    ("Beyou grafana", "GET", GRAFANA_TARGET, 200),
+    ("Beyou glitchtip (self)", "GET", GLITCHTIP_TARGET, 200),
+]
+if WATCHTOWER_TARGET:
+    INFRA_MONITORS.append(("Beyou watchtower", "TCP Port", WATCHTOWER_TARGET, None))
+
+for monitor_name, monitor_type, url, expected_status in INFRA_MONITORS:
+    reconcile_monitor(monitor_name, infra_project, monitor_type, url, expected_status)
 
 # --- alert rules -------------------------------------------------------------
 # Without these, everything above is decorative: events are stored, monitors go
@@ -260,8 +302,9 @@ print(f"monitor 'Beyou web frontend': {'created' if created else 'already presen
 #
 # Exactly ONE rule per project, deliberately: that uptime filter joins through
 # the project, so a second uptime=True rule on beyou-backend would mail every
-# monitor event twice.
-for slug, _name, _platform in SURFACES:
+# monitor event twice. The infra project joins the loop for the same reason —
+# its monitors alert through its own single rule.
+for slug in [s[0] for s in SURFACES] + ["beyou-infra"]:
     project = Project.objects.get(slug=slug, organization=org)
     alert, created = ProjectAlert.objects.get_or_create(
         project=project,
