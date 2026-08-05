@@ -17,11 +17,11 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
-# Read .env so GLITCHTIP_FRONTEND_TARGET and GLITCHTIP_ALERT_EMAIL have a
-# persistent home rather than needing a manual prefix every run — forgetting the
-# former let reconcile() rewrite a correct dev target back to the production
-# default, and forgetting the latter silently re-points alerts at the first
-# registered account.
+# Read .env so the GLITCHTIP_*_TARGET variables and GLITCHTIP_ALERT_EMAIL have
+# a persistent home rather than needing a manual prefix every run — forgetting
+# a target lets reconcile() rewrite a correct dev override back to the
+# production default, and forgetting the email silently re-points alerts at
+# the first registered account.
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -46,7 +46,12 @@ fi
 # Forwarded only when actually set, so an unset variable still falls through to
 # the Python default rather than arriving as an empty string.
 exec_args=(-i)
-for var in GLITCHTIP_FRONTEND_TARGET GLITCHTIP_ALERT_EMAIL; do
+for var in \
+  GLITCHTIP_FRONTEND_TARGET GLITCHTIP_BACKEND_TARGET GLITCHTIP_DB_TARGET \
+  GLITCHTIP_GLITCHTIP_DB_TARGET GLITCHTIP_VALKEY_TARGET \
+  GLITCHTIP_WATCHTOWER_TARGET GLITCHTIP_LOKI_TARGET GLITCHTIP_ALLOY_TARGET \
+  GLITCHTIP_PROMETHEUS_TARGET GLITCHTIP_GRAFANA_TARGET \
+  GLITCHTIP_GLITCHTIP_TARGET GLITCHTIP_ALERT_EMAIL; do
   if [ -n "${!var:-}" ]; then
     exec_args+=(-e "$var=${!var}")
   fi

@@ -21,7 +21,45 @@ services:
     restart: unless-stopped
     logging: *bounded-logging
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/prometheus.yml.tpl:/etc/prometheus/prometheus.yml.tpl:ro
+    environment:
+      # prometheus.yml.tpl carries @VAR@ tokens that THIS entrypoint renders
+      # with sed (Prometheus itself never expands env vars in config files,
+      # and the mounted template is read-only). Compose guarantees the
+      # defaults here, which is what keeps the config portable to a deployment
+      # that does not run this compose stack: set the same variables there.
+      CADVISOR_PORT: ${CADVISOR_PORT:-8080}
+      NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-9100}
+      POSTGRES_EXPORTER_PORT: ${POSTGRES_EXPORTER_PORT:-9187}
+      # Bearer token for watchtower's /v1/metrics. Empty default: watchtower
+      # only exists in the prod overlay, so in dev this scrape is down by
+      # design and the empty credentials get the target a 401, never a load
+      # failure. Set WATCHTOWER_API_TOKEN where watchtower runs (prod.yml
+      # requires it).
+      WATCHTOWER_API_TOKEN: ${WATCHTOWER_API_TOKEN:-}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      # Render the template into /etc/prometheus/prometheus.yml (writable in
+      # the image even under USER nobody), then hand over to the real
+      # process. $$ escapes compose interpolation so the shell sees $VAR.
+      # Keep the sed list in sync with the @VAR@ tokens in prometheus.yml.tpl.
+      #
+      # No --web.enable-lifecycle: it would expose POST /-/reload and POST
+      # /-/quit with no authentication, and nothing here reloads Prometheus at
+      # runtime (the config is rendered once, at startup). Binding to
+      # MONITORING_BIND is NOT protection — cloudflared runs as a host process
+      # and reaches 127.0.0.1, so any tunnel ingress rule pointing at this port
+      # would publish a remote kill switch. Config changes go through
+      # `docker compose up -d prometheus`.
+      - |
+        sed \
+          -e 's|@CADVISOR_PORT@|'"$$CADVISOR_PORT"'|g' \
+          -e 's|@NODE_EXPORTER_PORT@|'"$$NODE_EXPORTER_PORT"'|g' \
+          -e 's|@POSTGRES_EXPORTER_PORT@|'"$$POSTGRES_EXPORTER_PORT"'|g' \
+          -e 's|@WATCHTOWER_API_TOKEN@|'"$$WATCHTOWER_API_TOKEN"'|g' \
+          /etc/prometheus/prometheus.yml.tpl > /etc/prometheus/prometheus.yml
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
     ports:
       # /api/v1/query is unauthenticated — anything reachable here can read every
       # metric the stack collects.
@@ -55,6 +93,11 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Must set GRAFANA_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
+      # Grafana's own /metrics endpoint (Prometheus exposition, no auth when
+      # enabled). Scraped as job "grafana" so the dashboard sees Grafana
+      # answering; the endpoint is internal-only (no published port), and
+      # deep health (/api/health) is GlitchTip's monitor, not a scrape.
+      GF_METRICS_ENABLED: ${GRAFANA_METRICS_ENABLED:-true}
     ports:
       - "${MONITORING_BIND:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
     depends_on:
@@ -86,7 +129,7 @@ services:
     # No compose healthcheck, and not for lack of trying: the image is
     # distroless (no shell, no wget/curl — verified against 3.7.4), so there is
     # nothing to exec a probe with. Liveness is `up{job="loki"}` via the
-    # Prometheus scrape in monitoring/prometheus/prometheus.yml, which is the
+    # Prometheus scrape in monitoring/prometheus/prometheus.yml.tpl, which is the
     # signal that matters anyway — a dead log store fails silent, and only
     # something OUTSIDE the container notices silence.
     networks:
@@ -199,7 +242,7 @@ services:
       GLITCHTIP_UPTIME_ALLOW_PRIVATE_IPS: "True"
       GLITCHTIP_ENABLE_UPTIME: "True"
       # Exposes GlitchTip's own django-prometheus endpoint at GET /metrics (off
-      # by default). Scraped as job "glitchtip" in monitoring/prometheus/prometheus.yml
+      # by default). Scraped as job "glitchtip" in monitoring/prometheus/prometheus.yml.tpl
       # so the collector's liveness is observable from something that is NOT the
       # collector — see the long comment there for why that matters.
       #
@@ -245,6 +288,79 @@ services:
     networks:
       - beyou_net
       - glitchtip_net
+
+  # --- Container + host exporters -------------------------------------------
+  # Feed the "Beyou — Containers" dashboard. Without cAdvisor there is no
+  # per-container resource data anywhere in the stack (GlitchTip answers "is it
+  # answering?", these answer "what is it using?"). All three publish NO host
+  # port, like loki: their only clients are Prometheus and Grafana on
+  # beyou_net. Ports are overridable via CADVISOR_PORT / NODE_EXPORTER_PORT /
+  # POSTGRES_EXPORTER_PORT for a deployment that maps them differently.
+  #
+  # cAdvisor reads the Docker API (same trust level alloy and watchtower
+  # already assume here, but read-write: it lists containers, it does not tail
+  # logs) plus the cgroup/sysfs filesystems. It reports EVERY container on the
+  # host, so the dashboard filters to compose projects whose name starts with
+  # "beyou" — mirroring the keep rule in monitoring/alloy/config.alloy.
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.5
+    restart: unless-stopped
+    logging: *bounded-logging
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      - --listen_ip=0.0.0.0
+      - --port=${CADVISOR_PORT:-8080}
+    networks:
+      - beyou_net
+
+  # node-exporter: the host itself. "The JVM is fine but the box is swapping"
+  # is exactly the question this answers, and today the stack cannot even ask.
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    logging: *bounded-logging
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --web.listen-address=:${NODE_EXPORTER_PORT:-9100}
+    networks:
+      - beyou_net
+
+  # postgres-exporter: the app DB seen from the DB's own side, not through the
+  # backend's connection pool. Gives connections, cache hit ratio, deadlocks,
+  # locks and size; pg_up is the dashboard's "the database is answering"
+  # signal, one that does not need a TCP probe exporter.
+  #
+  # DATA_SOURCE_NAME carries the password like every other consumer of .env in
+  # this repo. If a deployment's password contains URL-reserved characters it
+  # must be percent-encoded here — that is why the connection string is built
+  # from parts rather than quoted wholesale.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    restart: unless-stopped
+    logging: *bounded-logging
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-1516}@db:5432/${POSTGRES_DB:-beyou}?sslmode=disable
+    command:
+      - --web.listen-address=:${POSTGRES_EXPORTER_PORT:-9187}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - beyou_net
 
 volumes:
   grafana_data: {}

@@ -212,6 +212,7 @@ The Playwright specs live in [`Beyou-e2e-tests`](https://github.com/AndDev741/Be
 | GlitchTip | 8000 | loopback | see the first-run warning below |
 | Alloy debug UI | 12345 | loopback | pipeline health, exposes `/-/reload` |
 | Loki | — | none, deliberately | unauthenticated API; query it through Grafana |
+| cAdvisor / node-exporter / postgres-exporter | — | none, deliberately | scraped over `beyou_net` only; ports overridable via `CADVISOR_PORT` / `NODE_EXPORTER_PORT` / `POSTGRES_EXPORTER_PORT` |
 
 `MONITORING_BIND` and `GLITCHTIP_BIND` override the loopback default. Only do that if you know what you are
 exposing and have something authenticating in front of it.
@@ -224,11 +225,13 @@ GlitchTip. The division of labour:
 | Question | Component | Retention |
 |---|---|---|
 | How is it performing? | Prometheus → Grafana | in-memory/TSDB defaults |
+| What are the containers doing? | Prometheus (cAdvisor + node-exporter + postgres-exporter) → Grafana | in-memory/TSDB defaults |
 | What happened? | Loki (fed by Alloy) | 30 days |
 | What broke? | GlitchTip (Sentry-compatible) | `GLITCHTIP_RETENTION_DAYS`, 30 |
 
-Three dashboards are provisioned into Grafana automatically: **Beyou — Service Health (consolidated)**,
-**Beyou — AI Agent**, and **Beyou Logs**.
+Four dashboards are provisioned into Grafana automatically: **Beyou — Containers** (fleet health: every
+container's resources, scrape targets, the host, the app DB and log/error volume), **Beyou — Service Health
+(consolidated)** (backend JVM internals), **Beyou — AI Agent**, and **Beyou Logs**.
 
 ### Logs (Loki + Alloy)
 
@@ -269,6 +272,26 @@ the apps nor Alloy do any log parsing.
 
 </details>
 
+### Container & host metrics
+
+Three exporters in the monitoring overlay feed the **Beyou — Containers** dashboard. None publishes a host port:
+their only clients are Prometheus and Grafana over `beyou_net`, same as Loki.
+
+| Exporter | What it measures | Job |
+|---|---|---|
+| cAdvisor (`ghcr.io/google/cadvisor`) | Per-container CPU, memory, network, disk, uptime, labeled by Compose service/project | `cadvisor` |
+| node-exporter (`prom/node-exporter`) | The host: CPU, load, memory, root disk, network | `node-exporter` |
+| postgres-exporter (`prometheuscommunity/postgres-exporter`) | The app DB from the DB's own side: connections, cache hit ratio, deadlocks, locks, size (`pg_up` is the "DB answering" signal) | `postgres-exporter` |
+
+Container ports are `CADVISOR_PORT` / `NODE_EXPORTER_PORT` / `POSTGRES_EXPORTER_PORT` (defaults 8080/9100/9187);
+the config template reads the same variables (monitoring/prometheus/prometheus.yml.tpl), so a deployment that maps them differently changes one line in `.env`.
+Grafana also exposes its own `/metrics` (`GF_METRICS_ENABLED`, job `grafana`), and watchtower's `/v1/metrics`
+(job `watchtower`, Bearer `WATCHTOWER_API_TOKEN`) is scraped where the updater runs with
+`--http-api-endpoints=metrics`.
+
+The dashboard scopes cAdvisor data to Compose projects whose name starts with `beyou` — this host runs unrelated
+stacks, and their containers do not belong on the fleet board. Same rule as the Alloy log filter.
+
 ### Error telemetry (GlitchTip)
 
 GlitchTip speaks the Sentry API, so the official Sentry SDKs in the backend, web, and mobile clients point at it
@@ -296,18 +319,24 @@ There is one supported path: **register the admin account in the UI, then run th
    ```
 
    It creates the organization and team, one project per reporting surface (`beyou-backend`, `beyou-web`,
-   `beyou-mobile`), all three monitors, and one alert rule per project with an e-mail recipient wired to it. It
+   `beyou-mobile`) plus an infrastructure project (`beyou-infra`) that hosts the container monitors, one uptime
+   monitor per Beyou container (10 uptime monitors plus the heartbeat in dev; 11 plus the heartbeat with the
+   watchtower monitor, which only exists where watchtower runs), and one alert rule per project with an
+   e-mail recipient wired to it. It
    then prints the DSNs, the heartbeat check-in URL, and which address alerts will actually reach.
 
 5. Paste the printed DSNs into the corresponding app env vars, and `SNAPSHOT_HEARTBEAT_URL` into this repo's
    `.env`.
 
-The script reads two values from `.env` and **overwrites them in the collector on every run**, so a wrong value
-here beats a right value in the UI:
+The script reads the `GLITCHTIP_*_TARGET` variables (one per uptime monitor; defaults match the compose stack's
+CONTAINER addresses) plus `GLITCHTIP_ALERT_EMAIL`, and **overwrites them in the collector on every run**, so a
+wrong value here beats a right value in the UI. Full list in `.env.example`; the ones a typical deployment
+touches:
 
 ```bash
 GLITCHTIP_FRONTEND_TARGET=frontend:3000   # dev; the script's default is prod's frontend:80
 GLITCHTIP_ALERT_EMAIL=ops@example.com     # empty = the account you registered in step 3
+GLITCHTIP_WATCHTOWER_TARGET=watchtower:8080   # only where watchtower runs (prod); empty skips the monitor
 ```
 
 > [!TIP]
@@ -356,7 +385,7 @@ otherwise the rule looks wired and mails nobody.
 <details>
 <summary><b>Reference record — the alert rule, by hand</b></summary>
 
-Under **Settings → Projects → &lt;project&gt; → Alerts**, for each of the three projects:
+Under **Settings → Projects → &lt;project&gt; → Alerts**, for each of the four projects:
 
 | Field | Value |
 |---|---|
@@ -372,15 +401,29 @@ otherwise create a second one alongside yours.
 
 #### Monitors
 
-Three monitors, answering three different questions. All three are created by the bootstrap script — none by
-Compose. GlitchTip monitors live in its database, so a retention wipe, a volume reset, or a move to a new host
-means re-running the script.
+One monitor per Beyou container, plus the heartbeat, all created by the bootstrap script — none by Compose.
+GlitchTip monitors live in its database, so a retention wipe, a volume reset, or a move to a new host means
+re-running the script. App monitors sit on the app projects; the container monitors sit on `beyou-infra`, which
+has its own alert rule — one rule per project, so a monitor event is never mailed twice.
 
 | # | Monitor | Type | Question it answers |
 |---|---|---|---|
 | 1 | `Beyou backend health` | GET `http://backend:9091/actuator/health` | Is the process answering? |
 | 2 | `Snapshot scheduler heartbeat` | Heartbeat, 5400s | Is the scheduled job still running? |
-| 3 | `Beyou web frontend` | TCP port | Is the app being served at all? |
+| 3 | `Beyou web frontend` | TCP `frontend:80` / `frontend:3000` | Is the app being served at all? |
+| 4 | `Beyou postgres (app DB)` | TCP `db:5432` | Is the database accepting connections? |
+| 5 | `Beyou glitchtip postgres` | TCP `glitchtip-db:5432` | Is the collector's DB answering? |
+| 6 | `Beyou glitchtip valkey` | TCP `glitchtip-valkey:6379` | Is the cache accepting connections? |
+| 7 | `Beyou watchtower` | TCP `watchtower:8080` | Is the updater's API up? (only where watchtower runs) |
+| 8 | `Beyou loki` | GET `http://loki:3100/ready` | Is the log store ready? |
+| 9 | `Beyou alloy` | GET `http://alloy:12345/-/healthy` | Is the whole log pipeline healthy? (500 = any component unhealthy) |
+| 10 | `Beyou prometheus` | GET `http://prometheus:9090/-/healthy` | Is the metrics store answering? |
+| 11 | `Beyou grafana` | GET `http://grafana:3000/api/health` | Is Grafana's own DB healthy? |
+| 12 | `Beyou glitchtip (self)` | GET `http://glitchtip:8000/_health/` | Is the collector answering? (for the Uptime page, not alerts) |
+
+All infra monitors use the same tuning as the backend one: 60s interval, 10s timeout, confirmation threshold 2
+(two consecutive failures before alerting — one dropped poll during a restart is not an outage). The TCP monitors
+need no HTTP endpoint and carry the port inside the URL field, exactly like the frontend monitor.
 
 Monitor 2 is the interesting one. `/actuator/health` keeps returning 200 while `RoutineSnapshotScheduler` quietly
 stops writing daily snapshots — nothing fails, data just stops appearing. So the check is inverted: the backend
@@ -471,7 +514,7 @@ wedges, every signal goes quiet at once and the stack looks calm. Two mechanisms
 > changes what `docker ps` prints.
 >
 > The gap is deliberate. Closing it properly means either an Alertmanager (`alerting:` + `rule_files:` in
-> `monitoring/prometheus/prometheus.yml`, with `up{job="glitchtip"} == 0` as the first rule) or Grafana alerting —
+> `monitoring/prometheus/prometheus.yml.tpl`, with `up{job="glitchtip"} == 0` as the first rule) or Grafana alerting —
 > a second notification system to own, consciously not introduced alongside the first. Until then, treat
 > "GlitchTip has gone quiet" as a thing to check, not a thing to trust.
 
