@@ -53,13 +53,27 @@ services:
       - --cleanup
       - --interval
       - "300"
-      # HTTP API on 8080 (the image's EXPOSE): /v1/update is a POST-only
-      # trigger, /v1/metrics is Prometheus exposition. The token is required
-      # with no default on purpose — the API server REFUSES to start with an
-      # empty token, and the resulting crash would silently kill the updater.
-      # Prometheus scrapes /v1/metrics with the same token (see monitoring/prometheus/prometheus.yml.tpl);
-      # GlitchTip TCP-checks the port, which needs no token.
-      - --http-api
+      # HTTP API on 8080 (the image's EXPOSE), metrics endpoint ONLY: this
+      # gives Prometheus /v1/metrics (see monitoring/prometheus/prometheus.yml.tpl)
+      # and GlitchTip a TCP port to probe, without an update trigger nobody
+      # calls.
+      #
+      # Do NOT add `update` to this list casually: enabling the update endpoint
+      # switches watchtower to API-triggered mode and SILENTLY STOPS the
+      # --interval polling above ("HTTP API enabled and periodic updates
+      # disabled" in its log), which is the whole auto-deploy mechanism. If
+      # /v1/update is ever needed, add `--http-api-periodic-polls` in the same
+      # breath to keep the timer running.
+      #
+      # The flag is --http-api-endpoints (a list); there is no bare --http-api
+      # in this image — it exits with "unknown flag" and restart:unless-stopped
+      # turns that into a crash loop that kills the updater.
+      #
+      # The token is required with no default on purpose: the API server
+      # refuses to start with an empty token when a non-health endpoint is
+      # enabled. Keep it HEX — it is injected into prometheus.yml through a sed
+      # expression delimited by `|`, so `|`, `&` or `\` would corrupt the config.
+      - --http-api-endpoints=metrics
       - --http-api-token=${WATCHTOWER_API_TOKEN:?Must set WATCHTOWER_API_TOKEN — openssl rand -hex 16}
     networks:
       - beyou_net

@@ -44,6 +44,14 @@ services:
       # the image even under USER nobody), then hand over to the real
       # process. $$ escapes compose interpolation so the shell sees $VAR.
       # Keep the sed list in sync with the @VAR@ tokens in prometheus.yml.tpl.
+      #
+      # No --web.enable-lifecycle: it would expose POST /-/reload and POST
+      # /-/quit with no authentication, and nothing here reloads Prometheus at
+      # runtime (the config is rendered once, at startup). Binding to
+      # MONITORING_BIND is NOT protection — cloudflared runs as a host process
+      # and reaches 127.0.0.1, so any tunnel ingress rule pointing at this port
+      # would publish a remote kill switch. Config changes go through
+      # `docker compose up -d prometheus`.
       - |
         sed \
           -e 's|@CADVISOR_PORT@|'"$$CADVISOR_PORT"'|g' \
@@ -51,7 +59,7 @@ services:
           -e 's|@POSTGRES_EXPORTER_PORT@|'"$$POSTGRES_EXPORTER_PORT"'|g' \
           -e 's|@WATCHTOWER_API_TOKEN@|'"$$WATCHTOWER_API_TOKEN"'|g' \
           /etc/prometheus/prometheus.yml.tpl > /etc/prometheus/prometheus.yml
-        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.enable-lifecycle
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
     ports:
       # /api/v1/query is unauthenticated — anything reachable here can read every
       # metric the stack collects.

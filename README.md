@@ -286,7 +286,8 @@ their only clients are Prometheus and Grafana over `beyou_net`, same as Loki.
 Container ports are `CADVISOR_PORT` / `NODE_EXPORTER_PORT` / `POSTGRES_EXPORTER_PORT` (defaults 8080/9100/9187);
 the config template reads the same variables (monitoring/prometheus/prometheus.yml.tpl), so a deployment that maps them differently changes one line in `.env`.
 Grafana also exposes its own `/metrics` (`GF_METRICS_ENABLED`, job `grafana`), and watchtower's `/v1/metrics`
-(job `watchtower`, Bearer `WATCHTOWER_API_TOKEN`) is scraped when the updater runs with its HTTP API on.
+(job `watchtower`, Bearer `WATCHTOWER_API_TOKEN`) is scraped where the updater runs with
+`--http-api-endpoints=metrics`.
 
 The dashboard scopes cAdvisor data to Compose projects whose name starts with `beyou` — this host runs unrelated
 stacks, and their containers do not belong on the fleet board. Same rule as the Alloy log filter.
@@ -319,8 +320,9 @@ There is one supported path: **register the admin account in the UI, then run th
 
    It creates the organization and team, one project per reporting surface (`beyou-backend`, `beyou-web`,
    `beyou-mobile`) plus an infrastructure project (`beyou-infra`) that hosts the container monitors, one uptime
-   monitor per Beyou container (11 monitors plus the heartbeat in dev; 12 with the watchtower monitor, which
-   only exists where watchtower runs), and one alert rule per project with an e-mail recipient wired to it. It
+   monitor per Beyou container (10 uptime monitors plus the heartbeat in dev; 11 plus the heartbeat with the
+   watchtower monitor, which only exists where watchtower runs), and one alert rule per project with an
+   e-mail recipient wired to it. It
    then prints the DSNs, the heartbeat check-in URL, and which address alerts will actually reach.
 
 5. Paste the printed DSNs into the corresponding app env vars, and `SNAPSHOT_HEARTBEAT_URL` into this repo's
