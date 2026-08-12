@@ -42,6 +42,28 @@ services:
     networks:
       - beyou_net
 
+  # Engineering documentation site (docs.beyouweb.com). Static, prerendered HTML
+  # served by its own nginx, which also proxies /api/v1/ to `backend` so the
+  # pages fetch their content same-origin — that is why nothing had to be added
+  # to CORS_ALLOWED_PATTERN for this host.
+  #
+  # The content itself is baked in at image build time: CI pulls every topic
+  # from the public docs API and writes one HTML file per route. A content
+  # change therefore ships as a new image, not as a restart — beyou-arch-design
+  # dispatches the docs-ui workflow after its import runs.
+  docs:
+    image: ghcr.io/anddev741/beyou-docs:latest
+    restart: unless-stopped
+    logging: *bounded-logging
+    ports:
+      - "127.0.0.1:3002:80"
+    depends_on:
+      - backend
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - beyou_net
+
   watchtower:
     image: nickfedor/watchtower
     restart: unless-stopped
