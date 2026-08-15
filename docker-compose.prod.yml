@@ -6,6 +6,14 @@ x-logging: &bounded-logging
     max-file: "3"
 
 services:
+  # The base file gives the database a convenience default so a dev box starts
+  # with no .env at all. Production is not a dev box: an unset password there
+  # would silently deploy the four digits the template used to ship, so this
+  # overlay refuses to start instead.
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Must set POSTGRES_PASSWORD}
+
   backend:
     image: ghcr.io/anddev741/beyou-backend:latest
     restart: unless-stopped
@@ -15,7 +23,7 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-beyou}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Must set POSTGRES_PASSWORD}
       UPLOAD_DIR: /data/uploads
     volumes:
       - beyou_uploads:/data/uploads

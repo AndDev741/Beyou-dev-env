@@ -85,14 +85,21 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Not "admin": half of any credential-stuffing list against a Grafana login
+      # is that username, and the other half is the password the line below now
+      # refuses to default.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?Must set GRAFANA_ADMIN_USER}
       # Required, no default. The previous `:-admin` combined with an empty
       # GRAFANA_ADMIN_PASSWORD= in .env.example meant an unedited copy published
       # Grafana as admin/admin — and a Grafana admin can add a datasource that
       # proxies anywhere inside beyou_net.
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Must set GRAFANA_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      # Off unless something actually embeds Grafana, and nothing does — checked
+      # across the web app and the docs site. "true" disables Grafana's own
+      # anti-framing headers, which on an instance reachable from the internet is
+      # handing away clickjacking protection for a feature nobody uses.
+      GF_SECURITY_ALLOW_EMBEDDING: ${GRAFANA_ALLOW_EMBEDDING:-false}
       # Grafana's own /metrics endpoint (Prometheus exposition, no auth when
       # enabled). Scraped as job "grafana" so the dashboard sees Grafana
       # answering; the endpoint is internal-only (no published port), and
