@@ -99,6 +99,14 @@ GRAFANA_TARGET = _target("GLITCHTIP_GRAFANA_TARGET", "http://grafana:3000/api/he
 # send its own alerts, which is what Prometheus' up{job="glitchtip"} is for.
 GLITCHTIP_TARGET = _target("GLITCHTIP_GLITCHTIP_TARGET", "http://glitchtip:8000/_health/")
 
+# Public pages, probed through their real URLs so the whole serving path is
+# exercised — Cloudflare Tunnel, DNS, TLS and the page itself — not just the
+# container port. These need outbound internet from the GlitchTip container;
+# a red light here can also mean the host lost container DNS, which is a real
+# outage of its own (outbound mail and image pulls break with it).
+LANDING_TARGET = _target("GLITCHTIP_LANDING_TARGET", "https://beyouweb.com/pt/")
+DOCS_TARGET = _target("GLITCHTIP_DOCS_TARGET", "https://docs.beyouweb.com/en")
+
 # watchtower only exists in the prod overlay. Empty (the default) skips the
 # monitor entirely — dev has no watchtower, and a permanently red monitor
 # nobody believes is worse than none. Set GLITCHTIP_WATCHTOWER_TARGET=watchtower:8080
@@ -258,6 +266,7 @@ heartbeat = reconcile_monitor(
 
 frontend_project = Project.objects.get(slug="beyou-web", organization=org)
 reconcile_monitor("Beyou web frontend", frontend_project, "TCP Port", FRONTEND_TARGET)
+reconcile_monitor("Beyou landing page (public)", frontend_project, "GET", LANDING_TARGET, 200)
 
 # --- infrastructure monitors -------------------------------------------------
 # One project per surface, same rule as the app projects: alerts join through
@@ -281,6 +290,7 @@ INFRA_MONITORS = [
     ("Beyou prometheus", "GET", PROMETHEUS_TARGET, 200),
     ("Beyou grafana", "GET", GRAFANA_TARGET, 200),
     ("Beyou glitchtip (self)", "GET", GLITCHTIP_TARGET, 200),
+    ("Beyou docs site (public)", "GET", DOCS_TARGET, 200),
 ]
 if WATCHTOWER_TARGET:
     INFRA_MONITORS.append(("Beyou watchtower", "TCP Port", WATCHTOWER_TARGET, None))
