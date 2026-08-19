@@ -9,6 +9,9 @@ import json
 import os
 
 DS = {"type": "prometheus", "uid": "prometheus"}
+# Rate-limit identity comes from the log, not a metric — see the "Rate limiting"
+# row. That is the only reason this Prometheus board also talks to Loki.
+LOKI = {"type": "loki", "uid": "loki"}
 APP = 'application=~"$application"'  # template variable, defaults to All
 
 # ---------------------------------------------------------------- layout engine
@@ -48,10 +51,10 @@ def _place(w, h):
     return pos
 
 
-def _targets(exprs):
+def _targets(exprs, ds=DS):
     out = []
     for i, (expr, legend, extra) in enumerate(exprs):
-        t = {"datasource": DS, "expr": expr, "refId": chr(ord("A") + i)}
+        t = {"datasource": ds, "expr": expr, "refId": chr(ord("A") + i)}
         if legend is not None:
             t["legendFormat"] = legend
         t.update(extra)
@@ -60,7 +63,7 @@ def _targets(exprs):
 
 
 def stat(title, desc, exprs, w=5, h=5, unit="short", color="green",
-         decimals=None, graph="none", text_mode="auto"):
+         decimals=None, graph="none", text_mode="auto", ds=DS):
     fc = {"color": {"mode": "fixed", "fixedColor": color}, "mappings": [],
           "unit": unit,
           "thresholds": {"mode": "absolute",
@@ -68,7 +71,7 @@ def stat(title, desc, exprs, w=5, h=5, unit="short", color="green",
     if decimals is not None:
         fc["decimals"] = decimals
     panels.append({
-        "datasource": DS, "description": desc,
+        "datasource": ds, "description": desc,
         "fieldConfig": {"defaults": fc, "overrides": []},
         "gridPos": _place(w, h), "id": _next_id(),
         "options": {"colorMode": "value", "graphMode": graph,
@@ -76,7 +79,7 @@ def stat(title, desc, exprs, w=5, h=5, unit="short", color="green",
                     "reduceOptions": {"calcs": ["lastNotNull"], "fields": "",
                                       "values": False},
                     "textMode": text_mode, "wideLayout": True},
-        "targets": _targets([(e, l, x) for (e, l, x) in exprs]),
+        "targets": _targets([(e, l, x) for (e, l, x) in exprs], ds),
         "title": title, "type": "stat",
     })
 
@@ -101,7 +104,7 @@ def gauge(title, desc, exprs, w=6, h=8, unit="percentunit", thresholds=None):
 
 
 def ts(title, desc, exprs, w=8, h=7, unit="short", stack=False,
-       fill=10, legend_table=True, decimals=None):
+       fill=10, legend_table=True, decimals=None, ds=DS):
     custom = {
         "axisBorderShow": False, "axisCenteredZero": False,
         "axisColorMode": "text", "axisPlacement": "auto", "barAlignment": 0,
@@ -120,7 +123,7 @@ def ts(title, desc, exprs, w=8, h=7, unit="short", stack=False,
     if decimals is not None:
         defaults["decimals"] = decimals
     panels.append({
-        "datasource": DS, "description": desc,
+        "datasource": ds, "description": desc,
         "fieldConfig": {"defaults": defaults, "overrides": []},
         "gridPos": _place(w, h), "id": _next_id(),
         "options": {"legend": {"calcs": [], "displayMode":
@@ -128,7 +131,20 @@ def ts(title, desc, exprs, w=8, h=7, unit="short", stack=False,
                     "placement": "right" if legend_table else "bottom",
                     "showLegend": True},
                     "tooltip": {"mode": "multi", "sort": "desc"}},
-        "targets": _targets(exprs), "title": title, "type": "timeseries",
+        "targets": _targets(exprs, ds), "title": title, "type": "timeseries",
+    })
+
+
+def logs(title, desc, expr, w=24, h=10, ds=LOKI):
+    panels.append({
+        "datasource": ds, "description": desc,
+        "gridPos": _place(w, h), "id": _next_id(),
+        "options": {"dedupStrategy": "none", "enableLogDetails": True,
+                    "prettifyLogMessage": False, "showCommonLabels": False,
+                    "showLabels": False, "showTime": True,
+                    "sortOrder": "Descending", "wrapLogMessage": True},
+        "targets": [{"datasource": ds, "expr": expr, "refId": "A"}],
+        "title": title, "type": "logs",
     })
 
 
@@ -480,6 +496,73 @@ ts("Top filter chains by avg latency",
    w=8, unit="s")
 
 # ================================================================ SCHEDULED TASKS
+# ============================================================= RATE LIMITING
+row("Rate limiting")
+# The counter is tagged with the tier and nothing else. The bucket key holds a
+# user id or an address, so tagging it would give the metric unbounded
+# cardinality — a caller rotating addresses would mint Prometheus series at
+# will, which attacks the monitoring rather than defending the app. Identity
+# therefore comes from the filter's WARN line, via Loki, in the last two
+# panels. Metrics say which limit is biting; the log says who.
+RL = f"beyou_ratelimit_rejected_total{{{APP}}}"
+# service="backend" is hard-coded rather than templated: this board is the
+# backend's, and two Loki panels do not justify a picker on all the others.
+RL_LINE = '{service="backend"} |= `Rate limit rejected`'
+RL_PARSE = ('| regexp `tier=(?P<tier>\\S+) key=(?P<key>\\S+) '
+            'retryAfter=(?P<retry>\\d+)s`')
+
+stat("Rejections in range",
+     "Requests the rate-limit filter turned away over the selected window. Zero "
+     "is the healthy reading — a limit that never bites is a limit sized for "
+     "real use. Anything here is either abuse or a tier sized too tightly, and "
+     "the by-tier panels below say which.",
+     [(f"sum(increase({RL}[$__range])) or vector(0)", None, {})],
+     w=6, color="orange", graph="area")
+stat("Tiers rejecting",
+     "How many distinct tiers turned anyone away. More than one at a time is "
+     "usually one caller hammering everything, rather than one endpoint being "
+     "mis-sized.",
+     [(f"count(count by (tier) (increase({RL}[$__range]) > 0)) or vector(0)", None, {})],
+     w=6, color="yellow")
+stat("Distinct callers rejected",
+     "Counted from the log, because the metric deliberately carries no "
+     "identity. One caller against many rejections is abuse; many callers at "
+     "once is a limit that needs raising.",
+     [(f"count(sum by (key) (count_over_time({RL_LINE} {RL_PARSE} [$__range]))) or vector(0)", None, {})],
+     w=6, color="red", ds=LOKI)
+stat("Peak rejections / min",
+     "Busiest single minute in the window. A brief spike against a greedily "
+     "refilling bucket is a very different problem from a sustained wall.",
+     [(f"max_over_time((sum(rate({RL}[1m])) * 60)[$__range:1m]) or vector(0)", None, {})],
+     w=6, color="purple", graph="area")
+
+ts("Rejections per minute by tier",
+   "Rate of 429s per tier. auth spiking alone is credential stuffing; agent or "
+   "onboarding spiking is someone spending the LLM budget; write spiking is "
+   "usually a client retry loop rather than a person.",
+   [(f"sum by (tier) (rate({RL}[5m])) * 60", "{{tier}}", {})],
+   w=12, stack=True)
+bargauge("Total rejections by tier (window)",
+         "Totals over the selected range, so a tier that bit once does not read "
+         "like one that bit constantly. A tier with no rejections is absent "
+         "rather than zero — the counter is created on first rejection.",
+         f"sum by (tier) (increase({RL}[$__range]))", w=12)
+
+ts("Top callers rejected",
+   "The ten bucket keys turned away most often, parsed out of the filter's WARN "
+   "line. A key is tier:identity — auth:<address> for the IP-keyed tiers, "
+   "agent:<userId> and friends for the per-user ones. This is the panel the "
+   "metric cannot give you, and the whole reason the log line exists.",
+   [(f"topk(10, sum by (key) (count_over_time({RL_LINE} {RL_PARSE} [$__auto])))",
+     "{{key}}", {})],
+   w=24, h=9, stack=True, ds=LOKI)
+logs("Rejection log",
+     "Every rejection, newest first. Each line carries the method, path, tier, "
+     "bucket key and the Retry-After the caller was handed — enough to tell a "
+     "user who hit a wall from a script that kept walking into it.",
+     RL_LINE)
+
+
 row("Scheduled tasks (@Scheduled)")
 ts("Scheduled execution rate (/s)",
    "Rate of @Scheduled method executions (e.g. RoutineSnapshotScheduler). Empty "
