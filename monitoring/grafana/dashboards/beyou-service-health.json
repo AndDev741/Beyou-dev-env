@@ -4719,6 +4719,549 @@
       },
       "id": 62,
       "panels": [],
+      "title": "Rate limiting",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Requests the rate-limit filter turned away over the selected window. Zero is the healthy reading \u2014 a limit that never bites is a limit sized for real use. Anything here is either abuse or a tier sized too tightly, and the by-tier panels below say which.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 155
+      },
+      "id": 63,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(beyou_ratelimit_rejected_total{application=~\"$application\"}[$__range])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Rejections in range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How many distinct tiers turned anyone away. More than one at a time is usually one caller hammering everything, rather than one endpoint being mis-sized.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 155
+      },
+      "id": 64,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(count by (tier) (increase(beyou_ratelimit_rejected_total{application=~\"$application\"}[$__range]) > 0)) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Tiers rejecting",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Counted from the log, because the metric deliberately carries no identity. One caller against many rejections is abuse; many callers at once is a limit that needs raising.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 155
+      },
+      "id": 65,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "count(sum by (key) (count_over_time({service=\"backend\"} |= `Rate limit rejected` | regexp `tier=(?P<tier>\\S+) key=(?P<key>\\S+) retryAfter=(?P<retry>\\d+)s` [$__range]))) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Distinct callers rejected",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Busiest single minute in the window. A brief spike against a greedily refilling bucket is a very different problem from a sustained wall.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 155
+      },
+      "id": 66,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max_over_time((sum(rate(beyou_ratelimit_rejected_total{application=~\"$application\"}[1m])) * 60)[$__range:1m]) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "title": "Peak rejections / min",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Rate of 429s per tier. auth spiking alone is credential stuffing; agent or onboarding spiking is someone spending the LLM budget; write spiking is usually a client retry loop rather than a person.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 160
+      },
+      "id": 67,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (tier) (rate(beyou_ratelimit_rejected_total{application=~\"$application\"}[5m])) * 60",
+          "refId": "A",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "title": "Rejections per minute by tier",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Totals over the selected range, so a tier that bit once does not read like one that bit constantly. A tier with no rejections is absent rather than zero \u2014 the counter is created on first rejection.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 160
+      },
+      "id": 68,
+      "options": {
+        "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (tier) (increase(beyou_ratelimit_rejected_total{application=~\"$application\"}[$__range]))",
+          "refId": "A",
+          "legendFormat": "{{__name__}}",
+          "instant": true
+        }
+      ],
+      "title": "Total rejections by tier (window)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "The ten bucket keys turned away most often, parsed out of the filter's WARN line. A key is tier:identity \u2014 auth:<address> for the IP-keyed tiers, agent:<userId> and friends for the per-user ones. This is the panel the metric cannot give you, and the whole reason the log line exists.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 170
+      },
+      "id": 69,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "topk(10, sum by (key) (count_over_time({service=\"backend\"} |= `Rate limit rejected` | regexp `tier=(?P<tier>\\S+) key=(?P<key>\\S+) retryAfter=(?P<retry>\\d+)s` [$__auto])))",
+          "refId": "A",
+          "legendFormat": "{{key}}"
+        }
+      ],
+      "title": "Top callers rejected",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Every rejection, newest first. Each line carries the method, path, tier, bucket key and the Retry-After the caller was handed \u2014 enough to tell a user who hit a wall from a script that kept walking into it.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 179
+      },
+      "id": 70,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service=\"backend\"} |= `Rate limit rejected`",
+          "refId": "A"
+        }
+      ],
+      "title": "Rejection log",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 189
+      },
+      "id": 71,
+      "panels": [],
       "title": "Scheduled tasks (@Scheduled)",
       "type": "row"
     },
@@ -4782,9 +5325,9 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 155
+        "y": 190
       },
-      "id": 63,
+      "id": 72,
       "options": {
         "legend": {
           "calcs": [],
@@ -4871,9 +5414,9 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 155
+        "y": 190
       },
-      "id": 64,
+      "id": 73,
       "options": {
         "legend": {
           "calcs": [],
@@ -4915,9 +5458,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 162
+        "y": 197
       },
-      "id": 65,
+      "id": 74,
       "panels": [],
       "title": "Diagnostics",
       "type": "row"
@@ -4982,9 +5525,9 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 163
+        "y": 198
       },
-      "id": 66,
+      "id": 75,
       "options": {
         "legend": {
           "calcs": [],
@@ -5071,9 +5614,9 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 163
+        "y": 198
       },
-      "id": 67,
+      "id": 76,
       "options": {
         "legend": {
           "calcs": [],
@@ -5169,9 +5712,9 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 163
+        "y": 198
       },
-      "id": 68,
+      "id": 77,
       "options": {
         "legend": {
           "calcs": [],
