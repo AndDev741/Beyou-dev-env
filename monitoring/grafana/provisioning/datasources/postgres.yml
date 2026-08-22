@@ -1,0 +1,30 @@
+# The app database as a Grafana SQL datasource, for the product dashboard's
+# panels that read domain tables directly (logins, check-ins, XP, AI messages).
+# Same reachability story as postgres-exporter: grafana sits on beyou_net, so
+# `db` resolves. Credentials arrive as environment variables on the grafana
+# container (docker-compose.monitoring.yml) and are expanded by Grafana's
+# provisioning — the password never lives in this file.
+#
+# Known trade-off: these are the application credentials, so Grafana holds
+# write-capable DB access (exactly like postgres-exporter already does). A
+# dedicated read-only role would be strictly better; if one is ever created,
+# only the two variables on the grafana service need to change.
+apiVersion: 1
+
+datasources:
+  - name: Beyou Postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: db:5432
+    uid: beyou-postgres
+    user: $BEYOU_DB_USER
+    isDefault: false
+    editable: false
+    jsonData:
+      database: $BEYOU_DB_NAME
+      sslmode: disable
+      postgresVersion: 1500
+      maxOpenConns: 2
+      maxIdleConns: 1
+    secureJsonData:
+      password: $BEYOU_DB_PASSWORD
