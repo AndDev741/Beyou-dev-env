@@ -105,6 +105,13 @@ services:
       # answering; the endpoint is internal-only (no published port), and
       # deep health (/api/health) is GlitchTip's monitor, not a scrape.
       GF_METRICS_ENABLED: ${GRAFANA_METRICS_ENABLED:-true}
+      # Expanded by Grafana's datasource provisioning into the Beyou Postgres
+      # datasource (provisioning/datasources/postgres.yml) — the same app-DB
+      # credentials postgres-exporter already carries, for the product
+      # dashboard's SQL panels. Defaults match the exporter's.
+      BEYOU_DB_USER: ${POSTGRES_USER:-postgres}
+      BEYOU_DB_PASSWORD: ${POSTGRES_PASSWORD:-1516}
+      BEYOU_DB_NAME: ${POSTGRES_DB:-beyou}
     ports:
       - "${MONITORING_BIND:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
     depends_on:
