@@ -562,6 +562,27 @@ Retention is 7 daily / 4 weekly / 6 monthly. restic additionally pins the oldest
 each interval (it shows as "oldest daily snapshot" in `forget` output) — that is normal, not
 a leak.
 
+### Cost
+
+R2's free tier is 10 GB-month, 1M Class A and 10M Class B operations. The measured repository
+for this stack is **about 10 MiB** — roughly 0.1% of the storage allowance — and a nightly run
+costs a few hundred Class A operations against a million-per-month allowance. Even a 50x
+overrun would bill cents: storage past the tier is $0.015/GB-month, rounded up to the next GB.
+
+**Cloudflare has no hard spend cap.** Budget alerts are informational only ("does not cap your
+usage or impact your account in any way") and fire a day late, because usage is processed once
+daily. So the guard lives here instead: `BACKUP_MAX_REPO_GB` (default 5) is checked after
+pruning, and a run that exceeds it exits non-zero and skips its heartbeat, so the backup
+monitor pages you instead of the invoice. Set a $1 budget alert under **Manage Account >
+Billing > Billable Usage** as a second line of defence — new pay-as-you-go accounts get a
+default $10 one, which is worth lowering.
+
+> [!WARNING]
+> Never manage repository size with an R2 lifecycle rule that expires objects. restic's pack
+> files are referenced by snapshots it still believes are intact, so expiring them corrupts the
+> repository and you find out at restore time. Lower the retention policy or
+> `BACKUP_MAX_REPO_GB` instead.
+
 ### One-time setup
 
 1. Create an R2 bucket, then an API token under **R2 > Manage API Tokens** with *Object Read

@@ -156,7 +156,44 @@ log "applying retention (7 daily / 4 weekly / 6 monthly)"
 restic forget --tag beyou --prune --group-by host \
   --keep-daily 7 --keep-weekly 4 --keep-monthly 6
 
-# --- 7. Heartbeat -------------------------------------------------------------------------
+# --- 7. Size guard ------------------------------------------------------------------------
+# Cloudflare has NO hard spend cap. Budget alerts are explicitly informational ("does not cap
+# your usage or impact your account in any way") and they fire a day late, because usage is
+# processed once daily. So the only thing that can actually stop this bucket from costing
+# money is this script.
+#
+# R2's free tier is 10 GB-month. Measured steady state for this stack is ~0.2 GB (17 retained
+# snapshots of a ~11 MB payload), i.e. about 2% of the allowance, so the guard sits far above
+# normal and only trips on something genuinely wrong: a table that started storing blobs, an
+# uploads directory that ran away, or a retention policy that quietly stopped pruning.
+#
+# It runs AFTER forget --prune, so it measures what is actually retained rather than the peak
+# mid-run. On a trip it deliberately skips the heartbeat and exits non-zero: the backup itself
+# already succeeded, but staying silent until the invoice arrives is the failure being
+# prevented.
+#
+# Do NOT solve a size problem with an R2 lifecycle rule that expires objects. restic's pack
+# files are referenced by snapshots it still believes are intact; deleting them out from under
+# it corrupts the repository, and you find out at restore time. Lower the retention policy or
+# BACKUP_MAX_REPO_GB instead.
+max_gb="${BACKUP_MAX_REPO_GB:-5}"
+repo_bytes="$(restic stats --mode raw-data --json 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["total_size"])' 2>/dev/null || echo 0)"
+if [[ "$repo_bytes" -gt 0 ]]; then
+  repo_mb=$(( repo_bytes / 1024 / 1024 ))
+  max_mb=$(( max_gb * 1024 ))
+  log "repository size ${repo_mb} MiB (guard ${max_gb} GiB, R2 free tier 10 GB)"
+  if [[ "$repo_mb" -gt "$max_mb" ]]; then
+    log "ERROR repository is ${repo_mb} MiB, over the ${max_gb} GiB guard."
+    log "ERROR the backup SUCCEEDED; this is a cost alarm, not a backup failure."
+    log "ERROR investigate what grew, then lower retention or raise BACKUP_MAX_REPO_GB."
+    exit 1
+  fi
+else
+  log "WARN could not read repository size; skipping the cost guard this run"
+fi
+
+# --- 8. Heartbeat -------------------------------------------------------------------------
 # Success only. A backup that stops running is the standard failure mode and it is invisible
 # from the inside, so the alert has to come from the ABSENCE of this ping — same inverted
 # check as the RoutineSnapshotScheduler monitor in the README.
