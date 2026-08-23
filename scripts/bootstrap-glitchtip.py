@@ -125,6 +125,13 @@ WATCHTOWER_TARGET = os.environ.get("GLITCHTIP_WATCHTOWER_TARGET", "").strip()
 # cycle or a single failed check-in without paging anyone.
 HEARTBEAT_PERIOD_SECONDS = 5400
 
+# The nightly backup runs at 03:20 with up to 5 minutes of systemd jitter. 26 hours lets a
+# single slow or skipped run pass without paging, while still catching "it stopped running".
+BACKUP_HEARTBEAT_PERIOD_SECONDS = 93600
+
+# The restore drill is weekly (Monday 04:10). 8 days, same one-miss tolerance.
+RESTORE_HEARTBEAT_PERIOD_SECONDS = 691200
+
 # Where alerts go. Empty means "the first registered account", which is already
 # a team member and therefore already a valid recipient — so the default stack
 # alerts somebody rather than nobody. Set it to a shared ops mailbox for a
@@ -306,6 +313,25 @@ if WATCHTOWER_TARGET:
 for monitor_name, monitor_type, url, expected_status in INFRA_MONITORS:
     reconcile_monitor(monitor_name, infra_project, monitor_type, url, expected_status)
 
+# Backups are infrastructure, so their heartbeats live on the infra project alongside the
+# other host-level monitors.
+#
+# Both are INVERTED checks, like the snapshot heartbeat: the scripts ping only on success, so
+# the alert is the ping that never arrives. This matters more here than anywhere else in this
+# file — a backup job that silently stops produces no error, no failed request and no red
+# health check. Nothing else on the box would ever tell you.
+#
+# Two monitors, not one, because "uploaded fine" and "actually restores" are different
+# claims and a backup that satisfies only the first is the classic way this goes wrong.
+backup_heartbeat = reconcile_monitor(
+    "Beyou backup (nightly)", infra_project, "Heartbeat",
+    interval=BACKUP_HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
+)
+restore_heartbeat = reconcile_monitor(
+    "Beyou restore drill (weekly)", infra_project, "Heartbeat",
+    interval=RESTORE_HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
+)
+
 # --- alert rules -------------------------------------------------------------
 # Without these, everything above is decorative: events are stored, monitors go
 # red, and nothing is sent. Two separate code paths both terminate here, and both
@@ -386,6 +412,17 @@ print(f"SENTRY_DSN=http://{dsn_key(dsns['beyou-backend'][0])}@glitchtip:8000/{ds
 print(
     f"SNAPSHOT_HEARTBEAT_URL=http://glitchtip:8000/api/0/organizations/{org.slug}"
     f"/heartbeat_check/{heartbeat.endpoint_id}/"
+)
+print("")
+print("# backup.sh and restore-check.sh run on the HOST (systemd), not in a container,")
+print("# so these two use 127.0.0.1 where the backend uses the `glitchtip` service name.")
+print(
+    f"BACKUP_HEARTBEAT_URL=http://127.0.0.1:8000/api/0/organizations/{org.slug}"
+    f"/heartbeat_check/{backup_heartbeat.endpoint_id}/"
+)
+print(
+    f"BACKUP_RESTORE_HEARTBEAT_URL=http://127.0.0.1:8000/api/0/organizations/{org.slug}"
+    f"/heartbeat_check/{restore_heartbeat.endpoint_id}/"
 )
 print("")
 print("# Beyou-Frontend/apps/web/.env — inlined into the bundle at BUILD time.")

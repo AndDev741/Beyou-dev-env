@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the Beyou offsite backup nightly
+Documentation=https://github.com/AndDev741/Beyou-dev-env#backups
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+# Catch up after a reboot or a box that was off at 03:20 — without this, downtime over the
+# scheduled minute silently costs a day.
+Persistent=true
+RandomizedDelaySec=300
+Unit=beyou-backup.service
+
+[Install]
+WantedBy=timers.target

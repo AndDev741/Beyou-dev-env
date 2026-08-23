@@ -1,0 +1,17 @@
+[Unit]
+Description=Beyou weekly restore drill (verify the newest snapshot actually restores)
+Documentation=https://github.com/AndDev741/Beyou-dev-env#backups
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/andre/beyou/Beyou-dev-env
+ExecStart=/home/andre/beyou/Beyou-dev-env/scripts/restore-check.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target
