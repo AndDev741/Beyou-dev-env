@@ -408,7 +408,7 @@ has its own alert rule — one rule per project, so a monitor event is never mai
 
 | # | Monitor | Type | Question it answers |
 |---|---|---|---|
-| 1 | `Beyou backend health` | GET `http://backend:9091/actuator/health` | Is the process answering? |
+| 1 | `Beyou backend health` | GET `http://backend:9091/actuator/health/uptime` | Is the process answering? |
 | 2 | `Snapshot scheduler heartbeat` | Heartbeat, 5400s | Is the scheduled job still running? |
 | 3 | `Beyou web frontend` | TCP `frontend:80` / `frontend:3000` | Is the app being served at all? |
 | 4 | `Beyou postgres (app DB)` | TCP `db:5432` | Is the database accepting connections? |
@@ -425,7 +425,7 @@ All infra monitors use the same tuning as the backend one: 60s interval, 10s tim
 (two consecutive failures before alerting — one dropped poll during a restart is not an outage). The TCP monitors
 need no HTTP endpoint and carry the port inside the URL field, exactly like the frontend monitor.
 
-Monitor 2 is the interesting one. `/actuator/health` keeps returning 200 while `RoutineSnapshotScheduler` quietly
+Monitor 2 is the interesting one. The health endpoint keeps returning 200 while `RoutineSnapshotScheduler` quietly
 stops writing daily snapshots — nothing fails, data just stops appearing. So the check is inverted: the backend
 checks in after every completed hourly cycle, and GlitchTip alerts on the check-in **not arriving**.
 
@@ -443,10 +443,19 @@ checks in after every completed hourly cycle, and GlitchTip alerts on the check-
 | Name | `Beyou backend health` |
 | Project | `beyou-backend` |
 | Monitor type | `GET` |
-| URL | `http://backend:9091/actuator/health` |
+| URL | `http://backend:9091/actuator/health/uptime` |
 | Expected status | `200` |
 | Interval / timeout | `60` / `10` seconds |
 | Confirmation threshold | `2` — one dropped poll during a restart is not an outage |
+
+The path is the `uptime` health **group**, not the bare `/actuator/health`. The bare endpoint aggregates every
+indicator Boot registers, and an indicator is free to make a network call: the mail one used to open a live
+authenticated SMTP session to Gmail on every poll, which cost ~550ms against ~4ms for a group — with no ceiling,
+because JavaMail's default timeout is infinite. That put a third party's latency in front of the 10s timeout
+above, and a slow Gmail read as a dead backend. The group is an allowlist (`db,diskSpace,ping`) defined in the
+backend's `application.yaml`; keep the two in step, because a renamed group leaves this monitor probing a 404.
+Not Boot's own `readiness` group: that one contains only `readinessState`, which is UP the moment the app has
+started and would not notice a dead database.
 
 Use the in-network URL, not `localhost`: inside the GlitchTip container `localhost` is GlitchTip. The management
 server binds `127.0.0.1` by default; this stack sets `MANAGEMENT_ADDRESS=0.0.0.0` so the container's port is
