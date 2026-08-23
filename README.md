@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/AndDev741/Beyou-Frontend/main/apps/web/src/assets/authentication/Logo.png" alt="BeYou logo" width="160" />
+  <img src="https://raw.githubusercontent.com/AndDev741/Beyou-Frontend/main/apps/web/src/assets/authentication/Logo.png" alt="Beyou logo" width="160" />
 </p>
 
-<h1 align="center">BeYou — Dev Environment</h1>
+<h1 align="center">Beyou — Dev Environment</h1>
 
 <p align="center">
-  Docker Compose orchestration for the whole BeYou stack.<br>
+  Docker Compose orchestration for the whole Beyou stack.<br>
   One command brings up Postgres, the Spring Boot API, and the web client — plus an optional observability overlay.
 </p>
 
@@ -20,7 +20,7 @@
 
 ---
 
-BeYou is a gamified personal-productivity app — habits, goals, routines, tasks, and categories, with XP and
+Beyou is a gamified personal-productivity app — habits, goals, routines, tasks, and categories, with XP and
 streaks on top. It lives across several repositories. **This one contains no application code.** It is the
 Compose layer that assembles the others into something you can actually run: locally with hot reload, as a
 production-like stack from published images, or as an isolated stack for the Playwright suite.
@@ -236,7 +236,7 @@ container's resources, scrape targets, the host, the app DB and log/error volume
 ### Logs (Loki + Alloy)
 
 Zero application configuration: anything a container writes to stdout is collected. Alloy tails every container
-in the BeYou Compose projects through the Docker API and pushes to Loki. That covers the Spring backend, the
+in the Beyou Compose projects through the Docker API and pushes to Loki. That covers the Spring backend, the
 frontend, Postgres, and the monitoring services themselves — identically in dev and prod.
 
 Start in **Grafana → Dashboards → Beyou Logs** (volume and error charts, plus a filterable browser), or query
