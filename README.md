@@ -545,9 +545,6 @@ so **offsite is not a second copy — it is the only copy** that survives the di
 | Loki, Grafana volume | — | never | Bounded logs; Grafana dashboards are provisioned from this repo, read-only |
 | Code, images | — | never | git + GHCR |
 
-The highest-value item is the 5 KB `.env`, not the database. Losing the database costs data;
-losing `.env` means re-issuing every credential the product owns while it is down.
-
 ### Destination
 
 restic to Cloudflare R2, plus plain dump files kept locally for `BACKUP_LOCAL_KEEP_DAYS`.
