@@ -25,7 +25,24 @@ die() { printf '%s backup: FATAL %s\n' "$(date -Is)" "$*" >&2; exit 1; }
 
 # Only one run at a time. A nightly job that overlaps a slow predecessor produces two restic
 # writers against one repo and a half-written dump in the local copy.
-exec 9>"${BACKUP_LOCK:-/var/lock/beyou-backup.lock}"
+#
+# The lock lives in /run (root:root 0755), NOT /run/lock (= /var/lock, root:root 1777).
+# fs.protected_regular is 2 on this host, which makes the kernel refuse to let root open a
+# file for writing inside a world-writable sticky directory when that file belongs to
+# somebody else. So a single stray andre-owned beyou-backup.lock in /run/lock — trivially
+# created by running this script once as a normal user — permanently breaks every root run
+# with EACCES. That happened, and it cost an afternoon: the script died before its first log
+# line, so the only symptom was systemd reporting status=1 with a bash redirection error
+# buried in a journal the non-root user could not read. /run cannot be written by non-root,
+# so the file there is always ours.
+lock_file="${BACKUP_LOCK:-/run/beyou-backup.lock}"
+
+# Checked with a normal redirection first, because a failed redirection on `exec` cannot be
+# routed through die() — bash reports it itself and the message never says which file or why
+# it mattered.
+: >>"$lock_file" 2>/dev/null \
+  || die "cannot open lock file $lock_file (owned by another user? see fs.protected_regular)"
+exec 9>>"$lock_file"
 flock -n 9 || die "another backup run holds the lock; giving up"
 
 [[ -f .env ]] || die ".env not found in $root_dir"
@@ -53,9 +70,15 @@ project_name="$(printf '%s' "$project_name" | tr '[:upper:]' '[:lower:]')"
 # overlay list (which differs between --monitoring and not) and hardcoded
 # `beyou-dev-env-db-1` breaks the day the project directory is renamed.
 container_for() {
-  docker ps -q \
+  # Deliberately NOT `docker ps ... | head -n1`. `set -o pipefail` is on, and head
+  # exiting after one line SIGPIPEs docker ps, so the pipeline reports failure and
+  # set -e kills the whole run — intermittently, only once there is more than one
+  # matching line to race over. Slice the first line in the shell instead.
+  local ids
+  ids="$(docker ps -q \
     --filter "label=com.docker.compose.project=${project_name}" \
-    --filter "label=com.docker.compose.service=$1" | head -n1
+    --filter "label=com.docker.compose.service=$1")" || return 1
+  printf '%s' "${ids%%$'\n'*}"
 }
 
 db_cid="$(container_for db)"
