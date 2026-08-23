@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Beyou restore drill weekly
+Documentation=https://github.com/AndDev741/Beyou-dev-env#backups
+
+[Timer]
+# Monday 04:10 — after Sunday's run, which is the one that also carries the GlitchTip dump.
+OnCalendar=Mon *-*-* 04:10:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=beyou-restore-check.service
+
+[Install]
+WantedBy=timers.target

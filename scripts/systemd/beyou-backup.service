@@ -1,0 +1,22 @@
+[Unit]
+Description=Beyou nightly offsite backup (Postgres + uploads + .env -> restic/R2)
+Documentation=https://github.com/AndDev741/Beyou-dev-env#backups
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Root, because it talks to the Docker socket and writes /var/backups/beyou. The script
+# itself never bind-mounts into a container, so it does not leave root-owned files behind
+# anywhere else.
+User=root
+WorkingDirectory=/home/andre/beyou/Beyou-dev-env
+ExecStart=/home/andre/beyou/Beyou-dev-env/scripts/backup.sh
+# A failed backup must be loud in the journal; the GlitchTip heartbeat monitor catches the
+# silent case (script never ran at all).
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

@@ -152,6 +152,8 @@ Subsequent starts reuse both.
 | `./scripts/down.sh prod` | Stop the production-like stack |
 | `./scripts/reset-db.sh` | Tear down the dev stack and delete the Postgres volume |
 | `./scripts/bootstrap-glitchtip.sh` | Create GlitchTip's org, projects, monitors, and alert rules |
+| `./scripts/backup.sh` | Dump the database, uploads and `.env` to a local copy and an encrypted restic repo ([Backups](#backups)) |
+| `./scripts/restore-check.sh` | Restore the newest snapshot into a scratch database and verify it against the live one |
 
 Add `--monitoring` to `up-dev.sh`, `up-prod.sh`, or `down.sh` to include the observability overlay:
 
@@ -526,6 +528,125 @@ wedges, every signal goes quiet at once and the stack looks calm. Two mechanisms
 > `monitoring/prometheus/prometheus.yml.tpl`, with `up{job="glitchtip"} == 0` as the first rule) or Grafana alerting —
 > a second notification system to own, consciously not introduced alongside the first. Until then, treat
 > "GlitchTip has gone quiet" as a thing to check, not a thing to trust.
+
+## Backups
+
+This box is a single host on a single disk with no RAID. Local Docker volumes hold everything,
+so **offsite is not a second copy — it is the only copy** that survives the disk.
+
+### What is backed up, and why that list
+
+| Item | Size | Cadence | Why |
+|---|---|---|---|
+| `.env` | 5 KB | nightly | Gitignored. `TOKEN_SECRET`, the Google OAuth secret, the mail password, `DOCS_IMPORT_TOKEN` and every LLM API key exist in exactly one place until this runs |
+| `beyou` database | ~15 MB | nightly | Irreplaceable product data |
+| `beyou_uploads` | ~1 MB | nightly | Referenced by database rows, so it must stay consistent with the dump |
+| `glitchtip` database | ~190 MB | Sundays | Mostly replaceable event history, but its DSNs are referenced from `.env` |
+| Loki, Grafana volume | — | never | Bounded logs; Grafana dashboards are provisioned from this repo, read-only |
+| Code, images | — | never | git + GHCR |
+
+### Destination
+
+restic to Cloudflare R2, plus plain dump files kept locally for `BACKUP_LOCAL_KEEP_DAYS`.
+Two copies with different failure modes: the local one for "someone deleted the wrong row an
+hour ago" (no network, no restic password), R2 for "the disk died".
+
+restic encrypts client-side. That is what makes it acceptable to send a full user database
+and a file of API keys to third-party storage at all — **do not** replace it with a plain
+tarball upload to Drive or similar without adding encryption of your own.
+
+Retention is 7 daily / 4 weekly / 6 monthly. restic additionally pins the oldest snapshot in
+each interval (it shows as "oldest daily snapshot" in `forget` output) — that is normal, not
+a leak.
+
+### Cost
+
+R2's free tier is 10 GB-month, 1M Class A and 10M Class B operations. The measured repository
+for this stack is **about 10 MiB** — roughly 0.1% of the storage allowance — and a nightly run
+costs a few hundred Class A operations against a million-per-month allowance. Even a 50x
+overrun would bill cents: storage past the tier is $0.015/GB-month, rounded up to the next GB.
+
+**Cloudflare has no hard spend cap.** Budget alerts are informational only ("does not cap your
+usage or impact your account in any way") and fire a day late, because usage is processed once
+daily. So the guard lives here instead: `BACKUP_MAX_REPO_GB` (default 5) is checked after
+pruning, and a run that exceeds it exits non-zero and skips its heartbeat, so the backup
+monitor pages you instead of the invoice. Set a $1 budget alert under **Manage Account >
+Billing > Billable Usage** as a second line of defence — new pay-as-you-go accounts get a
+default $10 one, which is worth lowering.
+
+> [!WARNING]
+> Never manage repository size with an R2 lifecycle rule that expires objects. restic's pack
+> files are referenced by snapshots it still believes are intact, so expiring them corrupts the
+> repository and you find out at restore time. Lower the retention policy or
+> `BACKUP_MAX_REPO_GB` instead.
+
+### One-time setup
+
+1. Create an R2 bucket, then an API token under **R2 > Manage API Tokens** with *Object Read
+   & Write* scoped to that one bucket. Nothing here needs bucket-delete rights.
+2. Generate the repository password and put it somewhere that is **not this machine**:
+   ```bash
+   sudo mkdir -p /etc/beyou
+   openssl rand -base64 32 | sudo tee /etc/beyou/restic-password
+   sudo chmod 600 /etc/beyou/restic-password
+   ```
+   Copy that value into a password manager **now**. restic cannot recover a repository
+   without it, and a copy that lives only on the box being backed up is worthless in the exact
+   scenario these backups exist for.
+3. Install restic: `sudo apt install restic`.
+4. Fill in the `Backups` block in `.env` (see `.env.example`). Re-run
+   `./scripts/bootstrap-glitchtip.sh` to create the two heartbeat monitors; it prints
+   `BACKUP_HEARTBEAT_URL` and `BACKUP_RESTORE_HEARTBEAT_URL` ready to paste.
+5. Install the timers:
+   ```bash
+   sudo cp scripts/systemd/beyou-*.{service,timer} /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now beyou-backup.timer beyou-restore-check.timer
+   systemctl list-timers 'beyou-*'
+   ```
+6. Prove it works before trusting it:
+   ```bash
+   sudo systemctl start beyou-backup.service && journalctl -u beyou-backup -n 40 --no-pager
+   sudo ./scripts/restore-check.sh
+   ```
+
+### Restoring
+
+```bash
+./scripts/restore-check.sh          # drill: newest R2 snapshot -> scratch DB, verify, drop
+./scripts/restore-check.sh --local  # same from the newest local copy, no network
+restic snapshots                    # list what exists
+restic restore <id> --target /tmp/r # pull a snapshot's files out by hand
+```
+
+A real restore of the app database, from a snapshot restored to `/tmp/r`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop backend
+docker exec -i beyou-dev-env-db-1 pg_restore --clean --if-exists --no-owner \
+  -U postgres -d beyou < /tmp/r/.../beyou.dump
+docker run --rm -i -v beyou-dev-env_beyou_uploads:/dst alpine \
+  tar -xzf - -C /dst < /tmp/r/.../uploads.tar.gz
+docker compose -f docker-compose.yml -f docker-compose.prod.yml start backend
+```
+
+### Three things that are easy to get wrong
+
+**The restore drill is the point, not the backup.** An untested backup is a directory that
+makes you feel better. `beyou-restore-check.timer` runs it weekly and it is a real check — it
+fails loudly on a dump whose tables come back empty (verified by restoring a deliberately
+truncated dump).
+
+**Backups are captured DB-first, uploads-second, on purpose.** Upload paths are UUIDs and are
+only ever added, so a file written between the two steps becomes a harmless orphan in the
+archive. The reverse order gives you the bad case: a restored row pointing at a file that was
+never copied — a silent broken reference.
+
+**Both heartbeats are inverted checks**, like `SNAPSHOT_HEARTBEAT_URL`. The scripts ping only
+on success, so the alert is the ping that never arrives. A backup job that silently stops
+produces no error, no failed request and no red health check; nothing else on this box would
+notice. There are two monitors rather than one because "uploaded fine" and "actually restores"
+are different claims, and a backup satisfying only the first is the classic way this fails.
 
 ## Troubleshooting
 
