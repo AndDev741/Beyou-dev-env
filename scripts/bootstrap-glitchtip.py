@@ -77,7 +77,15 @@ def _target(name, default):
 # (MANAGEMENT_ADDRESS=0.0.0.0 in .env); 127.0.0.1 is only the host-side binding
 # of the published port. That is why only a monitor sharing the compose network
 # can reach it, and why GlitchTip lives in the monitoring overlay.
-BACKEND_TARGET = _target("GLITCHTIP_BACKEND_TARGET", "http://backend:9091/actuator/health")
+#
+# The path is the `uptime` health GROUP, not the whole endpoint. /actuator/health
+# aggregates every registered indicator, and an indicator is free to make a
+# network call — the mail one used to open a live authenticated SMTP session to
+# Gmail on every single probe, which put a third party's latency in front of the
+# 10s timeout below and alerted on a backend that was perfectly alive. The group
+# (defined in the backend's application.yaml) is an allowlist of local checks, so
+# that cannot come back without someone editing the list on purpose.
+BACKEND_TARGET = _target("GLITCHTIP_BACKEND_TARGET", "http://backend:9091/actuator/health/uptime")
 
 # Dev runs Vite directly (3000); prod serves the built app through nginx (80).
 FRONTEND_TARGET = _target("GLITCHTIP_FRONTEND_TARGET", "frontend:80")
