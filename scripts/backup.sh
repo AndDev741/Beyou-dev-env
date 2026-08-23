@@ -4,9 +4,9 @@
 #
 # WHAT IS AND IS NOT IN HERE
 #   in:  the `beyou` database, the beyou_uploads volume, and .env — the three things on this
-#        box that exist nowhere else. .env is the highest-value item by a wide margin: it is
-#        gitignored, so TOKEN_SECRET, the Google OAuth secret, the mail password,
-#        DOCS_IMPORT_TOKEN and every LLM API key live in exactly one place until this runs.
+#        box that exist nowhere else. .env is gitignored, so TOKEN_SECRET, the Google OAuth
+#        secret, the mail password, DOCS_IMPORT_TOKEN and every LLM API key live in exactly
+#        one place until this runs.
 #   weekly: the GlitchTip database. Bigger than the app DB and mostly replaceable event
 #        history, but its bootstrap-issued DSNs are referenced from .env, so re-bootstrapping
 #        after a loss is not free.
