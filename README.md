@@ -327,7 +327,7 @@ There is one supported path: **register the admin account in the UI, then run th
    e-mail recipient wired to it. It
    then prints the DSNs, the heartbeat check-in URL, and which address alerts will actually reach.
 
-5. Paste the printed DSNs into the corresponding app env vars, and `SNAPSHOT_HEARTBEAT_URL` into this repo's
+5. Paste the printed DSNs into the corresponding app env vars, and `SNAPSHOT_HEARTBEAT_URL` (plus `NUDGE_HEARTBEAT_URL`, when the nudge monitor was created) into this repo's
    `.env`.
 
 The script reads the `GLITCHTIP_*_TARGET` variables (one per uptime monitor; defaults match the compose stack's
@@ -412,6 +412,7 @@ has its own alert rule — one rule per project, so a monitor event is never mai
 |---|---|---|---|
 | 1 | `Beyou backend health` | GET `http://backend:9091/actuator/health/uptime` | Is the process answering? |
 | 2 | `Snapshot scheduler heartbeat` | Heartbeat, 5400s | Is the scheduled job still running? |
+| 2b | `Engagement nudge heartbeat` | Heartbeat, 5400s | Is the nudge pass still running? **Opt-in**: set `GLITCHTIP_NUDGE_HEARTBEAT=1` and re-run the bootstrap in the same change that sets `ENGAGEMENT_NUDGES_ENABLED=true`. The pass returns before checking in while the flag is off, so a monitor created earlier pages every 90 minutes about a job that is off on purpose |
 | 3 | `Beyou web frontend` | TCP `frontend:80` / `frontend:3000` | Is the app being served at all? |
 | 4 | `Beyou postgres (app DB)` | TCP `db:5432` | Is the database accepting connections? |
 | 5 | `Beyou glitchtip postgres` | TCP `glitchtip-db:5432` | Is the collector's DB answering? |

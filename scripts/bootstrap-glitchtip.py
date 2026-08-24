@@ -4,7 +4,8 @@
 #
 # Creates, only when missing: the organization, its team, one project per
 # reporting surface (backend/web/mobile) plus an infrastructure project, one
-# uptime monitor per Beyou container, the snapshot-scheduler heartbeat, and
+# uptime monitor per Beyou container, the snapshot-scheduler heartbeat, the
+# engagement-nudge heartbeat (opt-in, see GLITCHTIP_NUDGE_HEARTBEAT), and
 # one alert rule per project with an e-mail recipient wired to it. Then prints
 # the DSNs and the heartbeat check-in URL, which are the values a deployment
 # has to configure.
@@ -124,6 +125,18 @@ WATCHTOWER_TARGET = os.environ.get("GLITCHTIP_WATCHTOWER_TARGET", "").strip()
 # The snapshot job runs hourly on the hour. 90 minutes leaves room for one slow
 # cycle or a single failed check-in without paging anyone.
 HEARTBEAT_PERIOD_SECONDS = 5400
+
+# The engagement-nudge pass runs hourly at :30, and checks in at the end of every cycle
+# regardless of whether it actually sent anything. Same 90-minute tolerance as the snapshot
+# job, for the same reason.
+NUDGE_HEARTBEAT_PERIOD_SECONDS = 5400
+
+# ...but only once the sender is switched on. The pass returns immediately while
+# `engagement.enabled` is false, BEFORE the check-in, so a monitor created ahead of the flag
+# would page every 90 minutes about a job that is off on purpose. Opt in with
+# GLITCHTIP_NUDGE_HEARTBEAT=1 in the same change that flips the flag; leaving it unset is
+# the correct state until then, and re-running the bootstrap afterwards is what creates it.
+NUDGE_HEARTBEAT_ENABLED = os.environ.get("GLITCHTIP_NUDGE_HEARTBEAT", "").strip() in ("1", "true", "yes")
 
 # The nightly backup runs at 03:20 with up to 5 minutes of systemd jitter. 26 hours lets a
 # single slow or skipped run pass without paging, while still catching "it stopped running".
@@ -278,6 +291,15 @@ heartbeat = reconcile_monitor(
     "Snapshot scheduler heartbeat", backend_project, "Heartbeat",
     interval=HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
 )
+nudge_heartbeat = None
+if NUDGE_HEARTBEAT_ENABLED:
+    nudge_heartbeat = reconcile_monitor(
+        "Engagement nudge heartbeat", backend_project, "Heartbeat",
+        interval=NUDGE_HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
+    )
+else:
+    print("monitor 'Engagement nudge heartbeat': skipped "
+          "(set GLITCHTIP_NUDGE_HEARTBEAT=1 once ENGAGEMENT_NUDGES_ENABLED is true)")
 
 frontend_project = Project.objects.get(slug="beyou-web", organization=org)
 reconcile_monitor("Beyou web frontend", frontend_project, "TCP Port", FRONTEND_TARGET)
@@ -413,6 +435,11 @@ print(
     f"SNAPSHOT_HEARTBEAT_URL=http://glitchtip:8000/api/0/organizations/{org.slug}"
     f"/heartbeat_check/{heartbeat.endpoint_id}/"
 )
+if nudge_heartbeat is not None:
+    print(
+        f"NUDGE_HEARTBEAT_URL=http://glitchtip:8000/api/0/organizations/{org.slug}"
+        f"/heartbeat_check/{nudge_heartbeat.endpoint_id}/"
+    )
 print("")
 print("# backup.sh and restore-check.sh run on the HOST (systemd), not in a container,")
 print("# so these two use 127.0.0.1 where the backend uses the `glitchtip` service name.")
