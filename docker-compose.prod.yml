@@ -25,6 +25,22 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Must set POSTGRES_PASSWORD}
       UPLOAD_DIR: /data/uploads
+      # No JAVA_OPTS override here, unlike docker-compose.dev.yml: the published
+      # image's entrypoint is exec-form `java -jar /app/app.jar` with no shell,
+      # so JAVA_OPTS is never read in this stack. JAVA_TOOL_OPTIONS is, because
+      # the JVM itself picks that one up.
+      # Without a memory limit on the service below, UseContainerSupport reads
+      # the whole host and MaxRAMPercentage's 25% default hands the JVM a ~1.9G
+      # heap on an 8G box it shares with the database, the frontend and the
+      # monitoring overlay. It then has no reason to collect, so RSS drifts up
+      # to fill the ceiling and pushes the host into swap. Measured heap in use
+      # is ~170M, so 70% of the 1024M limit (~717M) is still 4x headroom.
+      # MaxMetaspaceSize is set because metaspace is unbounded by default and
+      # already sits at ~163M; without a ceiling it is not covered by the heap
+      # cap and can grow into the limit until the kernel OOM-kills the container.
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=70
+        -XX:MaxMetaspaceSize=256m
     volumes:
       - beyou_uploads:/data/uploads
     ports:
@@ -36,6 +52,10 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     networks:
       - beyou_net
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
 
   frontend:
     image: ghcr.io/anddev741/beyou-web:latest

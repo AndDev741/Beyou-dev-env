@@ -185,6 +185,11 @@ source mounts. The web assets are served by nginx on container port 80. **Watcht
 redeploys any container carrying the `com.centurylinklabs.watchtower.enable=true` label, so pushing a new image
 tag is the deployment.
 
+The backend is capped at 1 GB with `MaxRAMPercentage=70` and `MaxMetaspaceSize=256m`, the same shape as the
+dev stack. The limit is what makes the percentage mean anything: with no `mem_limit`, the JVM's container
+support reads the whole host and the 25% default gives it a ~1.9 GB heap on an 8 GB box it shares with
+Postgres, nginx and the monitoring overlay — measured heap in use is ~170 MB.
+
 All published ports are bound to `127.0.0.1`. Put a reverse proxy with TLS in front for anything real.
 
 ### E2E — `docker-compose.e2e.yml`
