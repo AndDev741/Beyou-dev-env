@@ -890,7 +890,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "up{job=...} for every job in prometheus.yml. 1 = the target answered its last scrape; 0 = down or unreachable. watchtower is absent in dev by design. This is scrape-level availability; deep health per service lives in GlitchTip's Uptime page.",
+      "description": "up{job=...} for every job in prometheus.yml. 1 = the target answered its last scrape; 0 = down or unreachable. This is scrape-level availability; deep health per service lives in GlitchTip's Uptime page.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1025,16 +1025,6 @@
           },
           "expr": "up{job=\"grafana\"}",
           "refId": "I",
-          "legendFormat": "{{job}}",
-          "instant": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "up{job=\"watchtower\"}",
-          "refId": "J",
           "legendFormat": "{{job}}",
           "instant": true
         }

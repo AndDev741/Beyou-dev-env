@@ -10,10 +10,9 @@ x-logging: &bounded-logging
 services:
   backend:
     ports:
-      # Loopback-bound like every service in docker-compose.prod.yml. This
-      # overlay was the outlier: an actuator, an unauthenticated Prometheus query
-      # API and a Grafana admin login were all reachable from the network, and
-      # up-prod.sh --monitoring makes that a supported production start.
+      # Loopback-bound by default (MONITORING_BIND). Without it this overlay
+      # would put an actuator, an unauthenticated Prometheus query API and a
+      # Grafana admin login on every network interface of the dev machine.
       - "${MONITORING_BIND:-127.0.0.1}:${MANAGEMENT_PORT:-9091}:${MANAGEMENT_PORT:-9091}"
 
   prometheus:
@@ -31,12 +30,6 @@ services:
       CADVISOR_PORT: ${CADVISOR_PORT:-8080}
       NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-9100}
       POSTGRES_EXPORTER_PORT: ${POSTGRES_EXPORTER_PORT:-9187}
-      # Bearer token for watchtower's /v1/metrics. Empty default: watchtower
-      # only exists in the prod overlay, so in dev this scrape is down by
-      # design and the empty credentials get the target a 401, never a load
-      # failure. Set WATCHTOWER_API_TOKEN where watchtower runs (prod.yml
-      # requires it).
-      WATCHTOWER_API_TOKEN: ${WATCHTOWER_API_TOKEN:-}
     entrypoint:
       - /bin/sh
       - -ec
@@ -57,7 +50,6 @@ services:
           -e 's|@CADVISOR_PORT@|'"$$CADVISOR_PORT"'|g' \
           -e 's|@NODE_EXPORTER_PORT@|'"$$NODE_EXPORTER_PORT"'|g' \
           -e 's|@POSTGRES_EXPORTER_PORT@|'"$$POSTGRES_EXPORTER_PORT"'|g' \
-          -e 's|@WATCHTOWER_API_TOKEN@|'"$$WATCHTOWER_API_TOKEN"'|g' \
           /etc/prometheus/prometheus.yml.tpl > /etc/prometheus/prometheus.yml
         exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
     ports:
@@ -163,10 +155,9 @@ services:
       - /etc/alloy/config.alloy
     volumes:
       - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
-      # Read-only socket mount, same pattern watchtower already uses in
-      # docker-compose.prod.yml (and watchtower's is read-write). :ro protects
-      # the socket file, not the API — a process holding this socket can still
-      # control the Docker daemon, i.e. the host. Acceptable here because the
+      # Read-only socket mount. :ro protects the socket file, not the API — a
+      # process holding this socket can still control the Docker daemon, i.e.
+      # the host. Acceptable here because the
       # container runs one Grafana-built binary with a config from this repo,
       # and log collection via the API is what keeps app containers free of
       # log-shipper sidecars and file-path conventions.
@@ -311,11 +302,11 @@ services:
   # beyou_net. Ports are overridable via CADVISOR_PORT / NODE_EXPORTER_PORT /
   # POSTGRES_EXPORTER_PORT for a deployment that maps them differently.
   #
-  # cAdvisor reads the Docker API (same trust level alloy and watchtower
-  # already assume here, but read-write: it lists containers, it does not tail
-  # logs) plus the cgroup/sysfs filesystems. It reports EVERY container on the
-  # host, so the dashboard filters to compose projects whose name starts with
-  # "beyou" — mirroring the keep rule in monitoring/alloy/config.alloy.
+  # cAdvisor reads the Docker API (same trust level alloy already assumes
+  # here: it lists containers, it does not tail logs) plus the cgroup/sysfs
+  # filesystems. It reports EVERY container on the host, so the dashboard
+  # filters to compose projects whose name starts with "beyou" — mirroring
+  # the keep rule in monitoring/alloy/config.alloy.
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.5
     restart: unless-stopped

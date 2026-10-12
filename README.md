@@ -22,19 +22,22 @@
 
 Beyou is a gamified personal-productivity app — habits, goals, routines, tasks, and categories, with XP and
 streaks on top. It lives across several repositories. **This one contains no application code.** It is the
-Compose layer that assembles the others into something you can actually run: locally with hot reload, as a
-production-like stack from published images, or as an isolated stack for the Playwright suite.
+Compose layer that assembles the others into something you can actually run on your own machine: the dev stack
+with hot reload, an isolated stack for the Playwright suite, and an optional local observability overlay.
+
+Production does not run from this repository. It runs on a single-node k3s cluster managed by Flux from
+[be-infra](https://github.com/AndDev741/be-infra) — see [Production](#production).
 
 ## Highlights
 
-- **Composable overlays, not four separate stacks** — a base file defines Postgres and the shared network;
-  `dev`, `prod`, `e2e`, and `monitoring` overlays layer on top of it. The monitoring overlay is the *same file*
-  in development and production, so what you debug locally is what runs deployed.
+- **Composable overlays, not three separate stacks** — a base file defines Postgres and the shared network;
+  the `dev` and `monitoring` overlays layer on top of it, and `e2e` is a self-contained stack with its own
+  project name. The monitoring overlay is a local copy of the production observability stack (Prometheus,
+  Loki + Alloy, Grafana, GlitchTip), not the same deployment — production's lives in be-infra as Kubernetes
+  manifests.
 - **Hot reload in dev** — the backend and frontend source trees are bind-mounted; build artefacts
   (`target/`, `node_modules/`, the Maven repo) live in named volumes so host and container tooling never
   fight over the same directory.
-- **Production-like mode from published images** — pulls `ghcr.io/anddev741/beyou-*`, serves the web build
-  through nginx, and keeps containers current with Watchtower.
 - **Three observability questions, three answers** — Prometheus for *how is it performing*, Loki for
   *what happened*, GlitchTip for *what broke*. All three surface in one Grafana.
 - **Loopback by default** — every administrative surface (Grafana, Prometheus, GlitchTip, Alloy, the actuator)
@@ -45,7 +48,7 @@ production-like stack from published images, or as an isolated stack for the Pla
 ```mermaid
 flowchart LR
   subgraph app["beyou_net — application stack"]
-    fe["frontend<br/>Vite (dev) / nginx (prod)"]
+    fe["frontend<br/>Vite (dev)"]
     be["backend<br/>Spring Boot"]
     db[("postgres 15")]
     fe --> be --> db
@@ -147,15 +150,11 @@ Subsequent starts reuse both.
 | Command | What it does |
 |---|---|
 | `./scripts/up-dev.sh` | Build and run the dev stack in the foreground, with hot reload |
-| `./scripts/up-prod.sh` | Pull published images and run the production-like stack detached |
 | `./scripts/down.sh dev` | Stop the dev stack and remove orphans |
-| `./scripts/down.sh prod` | Stop the production-like stack |
 | `./scripts/reset-db.sh` | Tear down the dev stack and delete the Postgres volume |
 | `./scripts/bootstrap-glitchtip.sh` | Create GlitchTip's org, projects, monitors, and alert rules |
-| `./scripts/backup.sh` | Dump the database, uploads and `.env` to a local copy and an encrypted restic repo ([Backups](#backups)) |
-| `./scripts/restore-check.sh` | Restore the newest snapshot into a scratch database and verify it against the live one |
 
-Add `--monitoring` to `up-dev.sh`, `up-prod.sh`, or `down.sh` to include the observability overlay:
+Add `--monitoring` to `up-dev.sh` or `down.sh` to include the observability overlay:
 
 ```bash
 ./scripts/up-dev.sh --monitoring
@@ -178,20 +177,6 @@ against bind-mounted source. Container build output is kept in named volumes
 
 The backend is capped at 2 CPUs / 1 GB with `MaxRAMPercentage=70`.
 
-### Production-like — `docker-compose.yml` + `docker-compose.prod.yml`
-
-Runs `ghcr.io/anddev741/beyou-backend:latest` and `ghcr.io/anddev741/beyou-web:latest` — no build context, no
-source mounts. The web assets are served by nginx on container port 80. **Watchtower** polls every 5 minutes and
-redeploys any container carrying the `com.centurylinklabs.watchtower.enable=true` label, so pushing a new image
-tag is the deployment.
-
-The backend is capped at 1 GB with `MaxRAMPercentage=70` and `MaxMetaspaceSize=256m`, the same shape as the
-dev stack. The limit is what makes the percentage mean anything: with no `mem_limit`, the JVM's container
-support reads the whole host and the 25% default gives it a ~1.9 GB heap on an 8 GB box it shares with
-Postgres, nginx and the monitoring overlay — measured heap in use is ~170 MB.
-
-All published ports are bound to `127.0.0.1`. Put a reverse proxy with TLS in front for anything real.
-
 ### E2E — `docker-compose.e2e.yml`
 
 A self-contained stack under its own Compose project name (`beyou-e2e`) and its own network, so it can never
@@ -206,12 +191,27 @@ docker compose -f docker-compose.e2e.yml up -d --wait
 
 The Playwright specs live in [`Beyou-e2e-tests`](https://github.com/AndDev741/Beyou-e2e-tests).
 
+### Production
+
+Production is not a Compose stack. It runs on a single-node k3s cluster, reconciled by Flux from
+[be-infra](https://github.com/AndDev741/be-infra):
+
+| Path in be-infra | What lives there |
+|---|---|
+| `apps/beyou` | web, docs and backend Deployments, plus the backup CronJobs |
+| `apps/glitchtip` | the production GlitchTip |
+| `data/` | the shared CloudNativePG Postgres cluster |
+| `platform/monitoring` | kube-prometheus-stack, Loki, Alloy and Grafana, with e-mail alerting |
+
+Deploys are Flux image automation: CI pushes `ghcr.io/anddev741/beyou-*:latest`, and Flux picks up the new
+image and rolls it out. Nothing in this repository is involved, so a change here never reaches production.
+
 ## Ports
 
 | Service | Host port | Binding | Notes |
 |---|---|---|---|
-| Frontend | 3000 | all interfaces (dev) / loopback (prod) | Vite in dev, nginx in prod |
-| Backend | 8099 | all interfaces (dev) / loopback (prod) | API under `/api/v1` |
+| Frontend | 3000 | all interfaces | Vite dev server |
+| Backend | 8099 | all interfaces | API under `/api/v1` |
 | Postgres | 5490 | loopback | container port 5432 |
 | Backend management | 9091 | loopback, `--monitoring` only | `/actuator/*`, unversioned |
 | Grafana | 3001 | loopback | login required |
@@ -244,7 +244,7 @@ container's resources, scrape targets, the host, the app DB and log/error volume
 
 Zero application configuration: anything a container writes to stdout is collected. Alloy tails every container
 in the Beyou Compose projects through the Docker API and pushes to Loki. That covers the Spring backend, the
-frontend, Postgres, and the monitoring services themselves — identically in dev and prod.
+frontend, Postgres, and the monitoring services themselves — and the e2e stack too, when it runs.
 
 Start in **Grafana → Dashboards → Beyou Logs** (volume and error charts, plus a filterable browser), or query
 ad-hoc in **Explore**:
@@ -291,10 +291,9 @@ their only clients are Prometheus and Grafana over `beyou_net`, same as Loki.
 | postgres-exporter (`prometheuscommunity/postgres-exporter`) | The app DB from the DB's own side: connections, cache hit ratio, deadlocks, locks, size (`pg_up` is the "DB answering" signal) | `postgres-exporter` |
 
 Container ports are `CADVISOR_PORT` / `NODE_EXPORTER_PORT` / `POSTGRES_EXPORTER_PORT` (defaults 8080/9100/9187);
-the config template reads the same variables (monitoring/prometheus/prometheus.yml.tpl), so a deployment that maps them differently changes one line in `.env`.
-Grafana also exposes its own `/metrics` (`GF_METRICS_ENABLED`, job `grafana`), and watchtower's `/v1/metrics`
-(job `watchtower`, Bearer `WATCHTOWER_API_TOKEN`) is scraped where the updater runs with
-`--http-api-endpoints=metrics`.
+the config template reads the same variables (monitoring/prometheus/prometheus.yml.tpl), so mapping them
+differently changes one line in `.env`. Grafana also exposes its own `/metrics` (`GF_METRICS_ENABLED`, job
+`grafana`).
 
 The dashboard scopes cAdvisor data to Compose projects whose name starts with `beyou` — this host runs unrelated
 stacks, and their containers do not belong on the fleet board. Same rule as the Alloy log filter.
@@ -303,6 +302,10 @@ stacks, and their containers do not belong on the fleet board. Same rule as the 
 
 GlitchTip speaks the Sentry API, so the official Sentry SDKs in the backend, web, and mobile clients point at it
 by DSN. It also owns the uptime and heartbeat monitors, because it is the component that can notify a human.
+
+Everything in this section is about the **local** GlitchTip in the monitoring overlay. Production's GlitchTip
+(mnt.beyouweb.com) runs in be-infra (`apps/glitchtip`), and its monitors point at the cluster's Services, not at
+the container names used here.
 
 > [!CAUTION]
 > GlitchTip lets the **first** account self-register as admin regardless of `ENABLE_USER_REGISTRATION`. Between
@@ -327,23 +330,21 @@ There is one supported path: **register the admin account in the UI, then run th
 
    It creates the organization and team, one project per reporting surface (`beyou-backend`, `beyou-web`,
    `beyou-mobile`) plus an infrastructure project (`beyou-infra`) that hosts the container monitors, one uptime
-   monitor per Beyou container (10 uptime monitors plus the heartbeat in dev; 11 plus the heartbeat with the
-   watchtower monitor, which only exists where watchtower runs), and one alert rule per project with an
-   e-mail recipient wired to it. It
-   then prints the DSNs, the heartbeat check-in URL, and which address alerts will actually reach.
+   monitor per Beyou container plus the two public pages, the snapshot heartbeat, and one alert rule per project
+   with an e-mail recipient wired to it. It then prints the DSNs, the heartbeat check-in URL, and which address
+   alerts will actually reach.
 
 5. Paste the printed DSNs into the corresponding app env vars, and `SNAPSHOT_HEARTBEAT_URL` (plus `NUDGE_HEARTBEAT_URL`, when the nudge monitor was created) into this repo's
    `.env`.
 
 The script reads the `GLITCHTIP_*_TARGET` variables (one per uptime monitor; defaults match the compose stack's
 CONTAINER addresses) plus `GLITCHTIP_ALERT_EMAIL`, and **overwrites them in the collector on every run**, so a
-wrong value here beats a right value in the UI. Full list in `.env.example`; the ones a typical deployment
-touches:
+wrong value here beats a right value in the UI. Full list in `.env.example`; the ones you are most likely to
+touch:
 
 ```bash
-GLITCHTIP_FRONTEND_TARGET=frontend:3000   # dev; the script's default is prod's frontend:80
+GLITCHTIP_FRONTEND_TARGET=frontend:3000   # the dev stack's Vite port, also the script's default
 GLITCHTIP_ALERT_EMAIL=ops@example.com     # empty = the account you registered in step 3
-GLITCHTIP_WATCHTOWER_TARGET=watchtower:8080   # only where watchtower runs (prod); empty skips the monitor
 ```
 
 > [!TIP]
@@ -418,16 +419,15 @@ has its own alert rule — one rule per project, so a monitor event is never mai
 | 1 | `Beyou backend health` | GET `http://backend:9091/actuator/health/uptime` | Is the process answering? |
 | 2 | `Snapshot scheduler heartbeat` | Heartbeat, 5400s | Is the scheduled job still running? |
 | 2b | `Engagement nudge heartbeat` | Heartbeat, 5400s | Is the nudge pass still running? **Opt-in**: set `GLITCHTIP_NUDGE_HEARTBEAT=1` and re-run the bootstrap in the same change that sets `ENGAGEMENT_NUDGES_ENABLED=true`. The pass returns before checking in while the flag is off, so a monitor created earlier pages every 90 minutes about a job that is off on purpose |
-| 3 | `Beyou web frontend` | TCP `frontend:80` / `frontend:3000` | Is the app being served at all? |
+| 3 | `Beyou web frontend` | TCP `frontend:3000` | Is the app being served at all? |
 | 4 | `Beyou postgres (app DB)` | TCP `db:5432` | Is the database accepting connections? |
 | 5 | `Beyou glitchtip postgres` | TCP `glitchtip-db:5432` | Is the collector's DB answering? |
 | 6 | `Beyou glitchtip valkey` | TCP `glitchtip-valkey:6379` | Is the cache accepting connections? |
-| 7 | `Beyou watchtower` | TCP `watchtower:8080` | Is the updater's API up? (only where watchtower runs) |
-| 8 | `Beyou loki` | GET `http://loki:3100/ready` | Is the log store ready? |
-| 9 | `Beyou alloy` | GET `http://alloy:12345/-/healthy` | Is the whole log pipeline healthy? (500 = any component unhealthy) |
-| 10 | `Beyou prometheus` | GET `http://prometheus:9090/-/healthy` | Is the metrics store answering? |
-| 11 | `Beyou grafana` | GET `http://grafana:3000/api/health` | Is Grafana's own DB healthy? |
-| 12 | `Beyou glitchtip (self)` | GET `http://glitchtip:8000/_health/` | Is the collector answering? (for the Uptime page, not alerts) |
+| 7 | `Beyou loki` | GET `http://loki:3100/ready` | Is the log store ready? |
+| 8 | `Beyou alloy` | GET `http://alloy:12345/-/healthy` | Is the whole log pipeline healthy? (500 = any component unhealthy) |
+| 9 | `Beyou prometheus` | GET `http://prometheus:9090/-/healthy` | Is the metrics store answering? |
+| 10 | `Beyou grafana` | GET `http://grafana:3000/api/health` | Is Grafana's own DB healthy? |
+| 11 | `Beyou glitchtip (self)` | GET `http://glitchtip:8000/_health/` | Is the collector answering? (for the Uptime page, not alerts) |
 
 All infra monitors use the same tuning as the backend one: 60s interval, 10s timeout, confirmation threshold 2
 (two consecutive failures before alerting — one dropped poll during a restart is not an outage). The TCP monitors
@@ -499,7 +499,7 @@ produces a check-in URL; put it in `.env` as `SNAPSHOT_HEARTBEAT_URL` (using the
 | Name | `Beyou web frontend` |
 | Project | `beyou-web` |
 | Monitor type | `TCP Port` |
-| URL | `frontend:3000` (dev) / `frontend:80` (prod) |
+| URL | `frontend:3000` |
 | Interval / timeout | `60` / `10` seconds |
 | Confirmation threshold | `2` |
 
@@ -507,10 +507,10 @@ A healthy API behind a frontend that stopped being served is still a total outag
 would not notice. `TCP Port` monitors carry the port inside the URL field — GlitchTip splits on `:` and hands
 both halves to `asyncio.open_connection`. There is no separate port input, and `Expected status` is ignored.
 
-The port differs by environment, and getting it wrong is worse than having no monitor: it leaves a permanently
-red light nobody believes. The script defaults to prod, so a dev run needs
-`GLITCHTIP_FRONTEND_TARGET=frontend:3000`. This is a TCP connect, not an HTTP fetch — it proves something is
-accepting connections, not that the app renders.
+Getting the port wrong is worse than having no monitor: it leaves a permanently red light nobody believes. The
+script defaults to the dev stack's `frontend:3000`; override `GLITCHTIP_FRONTEND_TARGET` only if you serve the
+frontend some other way. This is a TCP connect, not an HTTP fetch — it proves something is accepting
+connections, not that the app renders.
 
 </details>
 
@@ -537,122 +537,12 @@ wedges, every signal goes quiet at once and the stack looks calm. Two mechanisms
 
 ## Backups
 
-This box is a single host on a single disk with no RAID. Local Docker volumes hold everything,
-so **offsite is not a second copy — it is the only copy** that survives the disk.
+Production backups are not done from this repository. They are in-cluster CronJobs in be-infra
+(`apps/beyou/backup.yaml`): a nightly `pg_dump` plus the uploads, shipped to an encrypted restic repository on
+Cloudflare R2, a weekly restore drill into a throwaway Postgres, and heartbeats to production's GlitchTip so a
+job that silently stops is noticed.
 
-### What is backed up, and why that list
-
-| Item | Size | Cadence | Why |
-|---|---|---|---|
-| `.env` | 5 KB | nightly | Gitignored. `TOKEN_SECRET`, the Google OAuth secret, the mail password, `DOCS_IMPORT_TOKEN` and every LLM API key exist in exactly one place until this runs |
-| `beyou` database | ~15 MB | nightly | Irreplaceable product data |
-| `beyou_uploads` | ~1 MB | nightly | Referenced by database rows, so it must stay consistent with the dump |
-| `glitchtip` database | ~190 MB | Sundays | Mostly replaceable event history, but its DSNs are referenced from `.env` |
-| Loki, Grafana volume | — | never | Bounded logs; Grafana dashboards are provisioned from this repo, read-only |
-| Code, images | — | never | git + GHCR |
-
-### Destination
-
-restic to Cloudflare R2, plus plain dump files kept locally for `BACKUP_LOCAL_KEEP_DAYS`.
-Two copies with different failure modes: the local one for "someone deleted the wrong row an
-hour ago" (no network, no restic password), R2 for "the disk died".
-
-restic encrypts client-side. That is what makes it acceptable to send a full user database
-and a file of API keys to third-party storage at all — **do not** replace it with a plain
-tarball upload to Drive or similar without adding encryption of your own.
-
-Retention is 7 daily / 4 weekly / 6 monthly. restic additionally pins the oldest snapshot in
-each interval (it shows as "oldest daily snapshot" in `forget` output) — that is normal, not
-a leak.
-
-### Cost
-
-R2's free tier is 10 GB-month, 1M Class A and 10M Class B operations. The measured repository
-for this stack is **about 10 MiB** — roughly 0.1% of the storage allowance — and a nightly run
-costs a few hundred Class A operations against a million-per-month allowance. Even a 50x
-overrun would bill cents: storage past the tier is $0.015/GB-month, rounded up to the next GB.
-
-**Cloudflare has no hard spend cap.** Budget alerts are informational only ("does not cap your
-usage or impact your account in any way") and fire a day late, because usage is processed once
-daily. So the guard lives here instead: `BACKUP_MAX_REPO_GB` (default 5) is checked after
-pruning, and a run that exceeds it exits non-zero and skips its heartbeat, so the backup
-monitor pages you instead of the invoice. Set a $1 budget alert under **Manage Account >
-Billing > Billable Usage** as a second line of defence — new pay-as-you-go accounts get a
-default $10 one, which is worth lowering.
-
-> [!WARNING]
-> Never manage repository size with an R2 lifecycle rule that expires objects. restic's pack
-> files are referenced by snapshots it still believes are intact, so expiring them corrupts the
-> repository and you find out at restore time. Lower the retention policy or
-> `BACKUP_MAX_REPO_GB` instead.
-
-### One-time setup
-
-1. Create an R2 bucket, then an API token under **R2 > Manage API Tokens** with *Object Read
-   & Write* scoped to that one bucket. Nothing here needs bucket-delete rights.
-2. Generate the repository password and put it somewhere that is **not this machine**:
-   ```bash
-   sudo mkdir -p /etc/beyou
-   openssl rand -base64 32 | sudo tee /etc/beyou/restic-password
-   sudo chmod 600 /etc/beyou/restic-password
-   ```
-   Copy that value into a password manager **now**. restic cannot recover a repository
-   without it, and a copy that lives only on the box being backed up is worthless in the exact
-   scenario these backups exist for.
-3. Install restic: `sudo apt install restic`.
-4. Fill in the `Backups` block in `.env` (see `.env.example`). Re-run
-   `./scripts/bootstrap-glitchtip.sh` to create the two heartbeat monitors; it prints
-   `BACKUP_HEARTBEAT_URL` and `BACKUP_RESTORE_HEARTBEAT_URL` ready to paste.
-5. Install the timers:
-   ```bash
-   sudo cp scripts/systemd/beyou-*.{service,timer} /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now beyou-backup.timer beyou-restore-check.timer
-   systemctl list-timers 'beyou-*'
-   ```
-6. Prove it works before trusting it:
-   ```bash
-   sudo systemctl start beyou-backup.service && journalctl -u beyou-backup -n 40 --no-pager
-   sudo ./scripts/restore-check.sh
-   ```
-
-### Restoring
-
-```bash
-./scripts/restore-check.sh          # drill: newest R2 snapshot -> scratch DB, verify, drop
-./scripts/restore-check.sh --local  # same from the newest local copy, no network
-restic snapshots                    # list what exists
-restic restore <id> --target /tmp/r # pull a snapshot's files out by hand
-```
-
-A real restore of the app database, from a snapshot restored to `/tmp/r`:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml stop backend
-docker exec -i beyou-dev-env-db-1 pg_restore --clean --if-exists --no-owner \
-  -U postgres -d beyou < /tmp/r/.../beyou.dump
-docker run --rm -i -v beyou-dev-env_beyou_uploads:/dst alpine \
-  tar -xzf - -C /dst < /tmp/r/.../uploads.tar.gz
-docker compose -f docker-compose.yml -f docker-compose.prod.yml start backend
-```
-
-### Three things that are easy to get wrong
-
-**The restore drill is the point, not the backup.** An untested backup is a directory that
-makes you feel better. `beyou-restore-check.timer` runs it weekly and it is a real check — it
-fails loudly on a dump whose tables come back empty (verified by restoring a deliberately
-truncated dump).
-
-**Backups are captured DB-first, uploads-second, on purpose.** Upload paths are UUIDs and are
-only ever added, so a file written between the two steps becomes a harmless orphan in the
-archive. The reverse order gives you the bad case: a restored row pointing at a file that was
-never copied — a silent broken reference.
-
-**Both heartbeats are inverted checks**, like `SNAPSHOT_HEARTBEAT_URL`. The scripts ping only
-on success, so the alert is the ping that never arrives. A backup job that silently stops
-produces no error, no failed request and no red health check; nothing else on this box would
-notice. There are two monitors rather than one because "uploaded fine" and "actually restores"
-are different claims, and a backup satisfying only the first is the classic way this fails.
+The local dev database is not backed up at all. Treat it as disposable — that is what `reset-db.sh` is for.
 
 ## Troubleshooting
 
@@ -662,7 +552,7 @@ are different claims, and a backup satisfying only the first is the classic way 
 | GlitchTip container exits immediately | `GLITCHTIP_SECRET_KEY` or `GLITCHTIP_DB_PASSWORD` is unset |
 | GlitchTip unhealthy for the first minute or two | Normal — migrations run before it starts serving |
 | No logs in Grafana | Checkout directory name does not start with `beyou`; check the `keep` rule in `monitoring/alloy/config.alloy` |
-| Frontend monitor permanently red | `GLITCHTIP_FRONTEND_TARGET` points at the wrong port for the environment |
+| Frontend monitor permanently red | `GLITCHTIP_FRONTEND_TARGET` does not match the frontend container's port (3000 in dev) |
 | Alerts never arrive | No `AlertRecipient` row, or a per-project **Off** — re-run the bootstrap script and read its `WARNING` lines |
 | SMTP works elsewhere but not for GlitchTip | Quoted value, unencoded `@` in the username, or an undoubled `$` — see the notes in `.env.example` |
 | `reset-db.sh` says the volume was not found | Project name differs from the directory name; set `COMPOSE_PROJECT_NAME` |

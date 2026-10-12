@@ -7,8 +7,11 @@
 # uptime monitor per Beyou container, the snapshot-scheduler heartbeat, the
 # engagement-nudge heartbeat (opt-in, see GLITCHTIP_NUDGE_HEARTBEAT), and
 # one alert rule per project with an e-mail recipient wired to it. Then prints
-# the DSNs and the heartbeat check-in URL, which are the values a deployment
+# the DSNs and the heartbeat check-in URLs, which are the values the dev stack
 # has to configure.
+#
+# This is for the LOCAL monitoring overlay only. Production's GlitchTip runs in
+# the k3s cluster from be-infra (apps/glitchtip), with its own monitors.
 #
 # Creation is get_or_create, but the run does NOT stop there: reconcile() writes
 # this file's values back over whatever is in the database, so a second run
@@ -68,7 +71,7 @@ SURFACES = [
 # GlitchTip probes from inside beyou_net, so every target is a CONTAINER
 # address: the container port, never the published host one (most of these are
 # not even published). Defaults match the compose stack; override any of them
-# in .env when a deployment names or ports things differently. A wrong target
+# in .env when your stack names or ports things differently. A wrong target
 # here leaves the monitor permanently DOWN, which is worse than no monitor —
 # a red light nobody believes.
 def _target(name, default):
@@ -88,8 +91,10 @@ def _target(name, default):
 # that cannot come back without someone editing the list on purpose.
 BACKEND_TARGET = _target("GLITCHTIP_BACKEND_TARGET", "http://backend:9091/actuator/health/uptime")
 
-# Dev runs Vite directly (3000); prod serves the built app through nginx (80).
-FRONTEND_TARGET = _target("GLITCHTIP_FRONTEND_TARGET", "frontend:80")
+# The dev stack runs Vite directly on 3000. (Production serves the built app
+# through nginx on 80, but production's GlitchTip and its monitors are
+# configured in be-infra, not by this script.)
+FRONTEND_TARGET = _target("GLITCHTIP_FRONTEND_TARGET", "frontend:3000")
 
 DB_TARGET = _target("GLITCHTIP_DB_TARGET", "db:5432")
 # The collector's datastores live on glitchtip_net, and GlitchTip is
@@ -116,12 +121,6 @@ GLITCHTIP_TARGET = _target("GLITCHTIP_GLITCHTIP_TARGET", "http://glitchtip:8000/
 LANDING_TARGET = _target("GLITCHTIP_LANDING_TARGET", "https://beyouweb.com/pt/")
 DOCS_TARGET = _target("GLITCHTIP_DOCS_TARGET", "https://docs.beyouweb.com/en")
 
-# watchtower only exists in the prod overlay. Empty (the default) skips the
-# monitor entirely — dev has no watchtower, and a permanently red monitor
-# nobody believes is worse than none. Set GLITCHTIP_WATCHTOWER_TARGET=watchtower:8080
-# where watchtower runs (its HTTP API must be enabled; see docker-compose.prod.yml).
-WATCHTOWER_TARGET = os.environ.get("GLITCHTIP_WATCHTOWER_TARGET", "").strip()
-
 # The snapshot job runs hourly on the hour. 90 minutes leaves room for one slow
 # cycle or a single failed check-in without paging anyone.
 HEARTBEAT_PERIOD_SECONDS = 5400
@@ -138,17 +137,10 @@ NUDGE_HEARTBEAT_PERIOD_SECONDS = 5400
 # the correct state until then, and re-running the bootstrap afterwards is what creates it.
 NUDGE_HEARTBEAT_ENABLED = os.environ.get("GLITCHTIP_NUDGE_HEARTBEAT", "").strip() in ("1", "true", "yes")
 
-# The nightly backup runs at 03:20 with up to 5 minutes of systemd jitter. 26 hours lets a
-# single slow or skipped run pass without paging, while still catching "it stopped running".
-BACKUP_HEARTBEAT_PERIOD_SECONDS = 93600
-
-# The restore drill is weekly (Monday 04:10). 8 days, same one-miss tolerance.
-RESTORE_HEARTBEAT_PERIOD_SECONDS = 691200
-
 # Where alerts go. Empty means "the first registered account", which is already
 # a team member and therefore already a valid recipient — so the default stack
-# alerts somebody rather than nobody. Set it to a shared ops mailbox for a
-# deployed stack.
+# alerts somebody rather than nobody. Set it to your own address if alerts
+# should go somewhere else.
 ALERT_EMAIL = (os.environ.get("GLITCHTIP_ALERT_EMAIL") or "").strip()
 
 def reconcile(obj, **fields):
@@ -329,30 +321,9 @@ INFRA_MONITORS = [
     ("Beyou glitchtip (self)", "GET", GLITCHTIP_TARGET, 200),
     ("Beyou docs site (public)", "GET", DOCS_TARGET, 200),
 ]
-if WATCHTOWER_TARGET:
-    INFRA_MONITORS.append(("Beyou watchtower", "TCP Port", WATCHTOWER_TARGET, None))
 
 for monitor_name, monitor_type, url, expected_status in INFRA_MONITORS:
     reconcile_monitor(monitor_name, infra_project, monitor_type, url, expected_status)
-
-# Backups are infrastructure, so their heartbeats live on the infra project alongside the
-# other host-level monitors.
-#
-# Both are INVERTED checks, like the snapshot heartbeat: the scripts ping only on success, so
-# the alert is the ping that never arrives. This matters more here than anywhere else in this
-# file — a backup job that silently stops produces no error, no failed request and no red
-# health check. Nothing else on the box would ever tell you.
-#
-# Two monitors, not one, because "uploaded fine" and "actually restores" are different
-# claims and a backup that satisfies only the first is the classic way this goes wrong.
-backup_heartbeat = reconcile_monitor(
-    "Beyou backup (nightly)", infra_project, "Heartbeat",
-    interval=BACKUP_HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
-)
-restore_heartbeat = reconcile_monitor(
-    "Beyou restore drill (weekly)", infra_project, "Heartbeat",
-    interval=RESTORE_HEARTBEAT_PERIOD_SECONDS, confirmation_threshold=1,
-)
 
 # --- alert rules -------------------------------------------------------------
 # Without these, everything above is decorative: events are stored, monitors go
@@ -440,17 +411,6 @@ if nudge_heartbeat is not None:
         f"NUDGE_HEARTBEAT_URL=http://glitchtip:8000/api/0/organizations/{org.slug}"
         f"/heartbeat_check/{nudge_heartbeat.endpoint_id}/"
     )
-print("")
-print("# backup.sh and restore-check.sh run on the HOST (systemd), not in a container,")
-print("# so these two use 127.0.0.1 where the backend uses the `glitchtip` service name.")
-print(
-    f"BACKUP_HEARTBEAT_URL=http://127.0.0.1:8000/api/0/organizations/{org.slug}"
-    f"/heartbeat_check/{backup_heartbeat.endpoint_id}/"
-)
-print(
-    f"BACKUP_RESTORE_HEARTBEAT_URL=http://127.0.0.1:8000/api/0/organizations/{org.slug}"
-    f"/heartbeat_check/{restore_heartbeat.endpoint_id}/"
-)
 print("")
 print("# Beyou-Frontend/apps/web/.env — inlined into the bundle at BUILD time.")
 print("# Changing it needs a rebuild, not a restart.")
