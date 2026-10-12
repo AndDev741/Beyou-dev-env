@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Creates the GlitchTip organization, projects, monitors and alert rules, then
-# prints the values a deployment has to configure. Safe to run repeatedly, and
+# prints the values the dev stack has to configure. Safe to run repeatedly, and
 # NOT a no-op on a re-run: it re-applies its own values over anything that
 # drifted in the collector. See scripts/bootstrap-glitchtip.py.
 #
@@ -12,16 +12,16 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/bootstrap-glitchtip.sh
-#   GLITCHTIP_FRONTEND_TARGET=frontend:3000 ./scripts/bootstrap-glitchtip.sh   # dev
+#   GLITCHTIP_FRONTEND_TARGET=frontend:3000 ./scripts/bootstrap-glitchtip.sh   # one-off override
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
 # Read .env so the GLITCHTIP_*_TARGET variables and GLITCHTIP_ALERT_EMAIL have
 # a persistent home rather than needing a manual prefix every run — forgetting
-# a target lets reconcile() rewrite a correct dev override back to the
-# production default, and forgetting the email silently re-points alerts at
-# the first registered account.
+# a target lets reconcile() rewrite a correct override back to the script's
+# default, and forgetting the email silently re-points alerts at the first
+# registered account.
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -39,9 +39,10 @@ fi
 
 # The Python reads these from *its* environment, which is the container's —
 # `docker exec` does not inherit the caller's shell. Without this forwarding the
-# documented dev override was silently a no-op, and worse: the script's
-# reconcile() then rewrote a correct frontend:3000 back to the frontend:80
-# default on every run, leaving the monitor permanently DOWN in dev.
+# documented overrides were silently a no-op, and worse: the script's
+# reconcile() then rewrote a correct override back to the default on every
+# run (this once left the dev frontend monitor permanently DOWN, back when the
+# default was a production nginx port).
 #
 # Forwarded only when actually set, so an unset variable still falls through to
 # the Python default rather than arriving as an empty string.
@@ -49,7 +50,7 @@ exec_args=(-i)
 for var in \
   GLITCHTIP_FRONTEND_TARGET GLITCHTIP_BACKEND_TARGET GLITCHTIP_DB_TARGET \
   GLITCHTIP_GLITCHTIP_DB_TARGET GLITCHTIP_VALKEY_TARGET \
-  GLITCHTIP_WATCHTOWER_TARGET GLITCHTIP_LOKI_TARGET GLITCHTIP_ALLOY_TARGET \
+  GLITCHTIP_LOKI_TARGET GLITCHTIP_ALLOY_TARGET \
   GLITCHTIP_PROMETHEUS_TARGET GLITCHTIP_GRAFANA_TARGET \
   GLITCHTIP_LANDING_TARGET GLITCHTIP_DOCS_TARGET \
   GLITCHTIP_GLITCHTIP_TARGET GLITCHTIP_ALERT_EMAIL GLITCHTIP_NUDGE_HEARTBEAT; do

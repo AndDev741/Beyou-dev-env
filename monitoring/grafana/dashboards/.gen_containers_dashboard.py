@@ -231,14 +231,13 @@ ts("Uptime (resets = restart)",
 row("Endpoints (Prometheus scrape targets)")
 stat("Scrape targets (1 = answering)",
      "up{job=...} for every job in prometheus.yml. 1 = the target answered "
-     "its last scrape; 0 = down or unreachable. watchtower is absent in dev "
-     "by design. This is scrape-level availability; deep health per service "
+     "its last scrape; 0 = down or unreachable. This is scrape-level availability; deep health per service "
      "lives in GlitchTip's Uptime page.",
      [(f"up{{job=\"{job}\"}}", "{{job}}", {"instant": True})
       for job in [
           "beyou-backend", "glitchtip", "loki", "alloy",
           "prometheus", "cadvisor", "node-exporter", "postgres-exporter",
-          "grafana", "watchtower",
+          "grafana",
       ]],
      w=24, h=5, unit="short",
      thresholds=[{"color": "red", "value": None},

@@ -19,7 +19,6 @@ global:
 # Render check after editing:
 #   sed -e 's|@CADVISOR_PORT@|8080|g' -e 's|@NODE_EXPORTER_PORT@|9100|g' \
 #       -e 's|@POSTGRES_EXPORTER_PORT@|9187|g' \
-#       -e 's|@WATCHTOWER_API_TOKEN@|x|g' \
 #       prometheus.yml.tpl > /tmp/p.yml && promtool check config /tmp/p.yml
 
 scrape_configs:
@@ -110,17 +109,3 @@ scrape_configs:
     metrics_path: "/metrics"
     static_configs:
       - targets: ["grafana:3000"]
-
-  # watchtower's /v1/metrics, which only exists when the metrics endpoint is
-  # enabled via --http-api-endpoints (see docker-compose.prod.yml, which also
-  # explains why `update` must not join that list without
-  # --http-api-periodic-polls). Bearer token is the same WATCHTOWER_API_TOKEN
-  # the updater requires. In dev there is no watchtower container, so this
-  # target stays down by design — truthful, not misconfigured.
-  - job_name: "watchtower"
-    metrics_path: "/v1/metrics"
-    authorization:
-      type: Bearer
-      credentials: "@WATCHTOWER_API_TOKEN@"
-    static_configs:
-      - targets: ["watchtower:8080"]
