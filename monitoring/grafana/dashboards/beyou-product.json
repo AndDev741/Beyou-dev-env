@@ -831,8 +831,8 @@
     },
     {
       "type": "timeseries",
-      "title": "AI agent messages per day, by provider",
-      "description": "Assistant turns from agent_message; provider says which LLM in the fallback chain actually answered.",
+      "title": "AI agent messages per day",
+      "description": "Assistant turns from agent_message.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "beyou-postgres"
@@ -881,7 +881,7 @@
             "uid": "beyou-postgres"
           },
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('day', created_at) AS time, coalesce(provider, 'unknown') AS metric, count(*)::int AS value FROM agent_message WHERE $__timeFilter(created_at) AND role = 'ASSISTANT' GROUP BY 1, 2 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*)::int AS \"messages\" FROM agent_message WHERE $__timeFilter(created_at) AND role = 'ASSISTANT' GROUP BY 1 ORDER BY 1",
           "format": "time_series",
           "refId": "A"
         }
